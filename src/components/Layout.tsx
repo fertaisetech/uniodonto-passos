@@ -7,6 +7,7 @@ import {
   User, 
   ChevronLeft, 
   ChevronRight,
+  ChevronDown,
   Calendar,
   Filter,
   Download,
@@ -18,6 +19,7 @@ import { useAppSession } from "../context/AppSessionContext";
 
 export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isMobileMonthMenuOpen, setIsMobileMonthMenuOpen] = useState(false);
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -68,6 +70,13 @@ export function Layout() {
   const nextMonth = refIndex < monthsList.length - 1 ? monthsList[refIndex + 1] : null;
 
   const hasNextMonth = refIndex < monthsList.length - 1;
+
+  const updateMonth = (month: string) => {
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set("month", month);
+    setSearchParams(newParams);
+    setIsMobileMonthMenuOpen(false);
+  };
 
   return (
     <div className="flex h-screen bg-background text-text-primary antialiased overflow-hidden">
@@ -148,7 +157,47 @@ export function Layout() {
 
           <div className="dashboard-header__actions">
             {isDashboard ? (
-              <div className="flex flex-col sm:flex-row items-center gap-3">
+              <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                <div className="relative w-full md:hidden">
+                  <button
+                    type="button"
+                    onClick={() => setIsMobileMonthMenuOpen((current) => !current)}
+                    className="w-full flex items-center justify-between gap-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl px-4 py-3 shadow-sm text-left"
+                    aria-label={`Selecionar mês atual ${currentMonthDisplay}`}
+                    aria-expanded={isMobileMonthMenuOpen}
+                  >
+                    <span className={`text-sm font-extrabold ${currentMonth !== "Todos" ? "text-[#A60069]" : "text-slate-700"}`}>
+                      {currentMonthDisplay}
+                    </span>
+                    <ChevronDown className={`w-4 h-4 text-[#64748B] transition-transform ${isMobileMonthMenuOpen ? "rotate-180" : ""}`} />
+                  </button>
+
+                  {isMobileMonthMenuOpen && (
+                    <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 rounded-2xl border border-[#E2E8F0] bg-white shadow-2xl overflow-hidden">
+                      <div className="max-h-[55vh] overflow-y-auto">
+                        <button
+                          type="button"
+                          onClick={() => updateMonth("Todos")}
+                          className={`w-full px-4 py-3 text-left text-sm font-bold border-b border-slate-100 last:border-b-0 hover:bg-[#FFF5F9] transition-colors ${currentMonth === "Todos" ? "text-[#A60069] bg-[#FFF5F9]" : "text-slate-700"}`}
+                        >
+                          Todos os Meses
+                        </button>
+                        {monthsList.map((month) => (
+                          <button
+                            key={month}
+                            type="button"
+                            onClick={() => updateMonth(month)}
+                            className={`w-full px-4 py-3 text-left text-sm font-bold border-b border-slate-100 last:border-b-0 hover:bg-[#FFF5F9] transition-colors ${currentMonth === month ? "text-[#A60069] bg-[#FFF5F9]" : "text-slate-700"}`}
+                          >
+                            {month}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="hidden md:flex flex-col sm:flex-row items-center gap-3">
                 {/* 1. Monthly navigation row */}
                 <div className="flex items-center gap-1 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-1 shadow-sm select-none">
                   {refIndex > 0 && (
@@ -156,9 +205,7 @@ export function Layout() {
                       type="button"
                       onClick={() => {
                         const nextIdx = refIndex - 1;
-                        const newParams = new URLSearchParams(searchParams);
-                        newParams.set("month", monthsList[nextIdx]);
-                        setSearchParams(newParams);
+                        updateMonth(monthsList[nextIdx]);
                       }}
                       className="p-1 text-[#64748B] hover:text-[#A60069] hover:bg-[#FFF5F9] rounded-md transition-all self-center"
                       title="Mês Anterior"
@@ -171,11 +218,7 @@ export function Layout() {
                   {prevMonth && (
                     <button
                       type="button"
-                      onClick={() => {
-                        const newParams = new URLSearchParams(searchParams);
-                        newParams.set("month", prevMonth);
-                        setSearchParams(newParams);
-                      }}
+                      onClick={() => updateMonth(prevMonth)}
                       className="px-3 py-1 text-xs font-semibold text-[#64748B] hover:text-[#A60069] hover:bg-[#FFF5F9] rounded-lg transition-all"
                       aria-label={`Selecionar mês ${prevMonth}`}
                     >
@@ -185,11 +228,7 @@ export function Layout() {
                   
                   <button
                     type="button"
-                    onClick={() => {
-                      const newParams = new URLSearchParams(searchParams);
-                      newParams.set("month", currentMonthDisplay);
-                      setSearchParams(newParams);
-                    }}
+                    onClick={() => updateMonth(currentMonthDisplay)}
                     className={`px-4 py-1 text-xs font-extrabold rounded-lg transition-all border ${
                       isMonthActive
                         ? "bg-[#FFF5F9] text-[#A60069] border-[#A60069]/20 shadow-[0_1px_2px_rgba(166,0,105,0.08)]"
@@ -203,11 +242,7 @@ export function Layout() {
                   {nextMonth && (
                     <button
                       type="button"
-                      onClick={() => {
-                        const newParams = new URLSearchParams(searchParams);
-                        newParams.set("month", nextMonth);
-                        setSearchParams(newParams);
-                      }}
+                      onClick={() => updateMonth(nextMonth)}
                       className="px-3 py-1 text-xs font-semibold text-[#64748B] hover:text-[#A60069] hover:bg-[#FFF5F9] rounded-lg transition-all"
                       aria-label={`Selecionar mês ${nextMonth}`}
                     >
@@ -218,12 +253,7 @@ export function Layout() {
                   {hasNextMonth && (
                     <button
                       type="button"
-                      onClick={() => {
-                        const nextIdx = refIndex + 1;
-                        const newParams = new URLSearchParams(searchParams);
-                        newParams.set("month", monthsList[nextIdx]);
-                        setSearchParams(newParams);
-                      }}
+                      onClick={() => updateMonth(monthsList[refIndex + 1])}
                       className="p-1 text-[#64748B] hover:text-[#A60069] hover:bg-[#FFF5F9] rounded-md transition-all self-center"
                       title="Próximo Mês"
                       aria-label="Ir para o próximo mês"
@@ -237,9 +267,7 @@ export function Layout() {
                 <select
                   value={currentMonth}
                   onChange={(e) => {
-                    const newParams = new URLSearchParams(searchParams);
-                    newParams.set("month", e.target.value);
-                    setSearchParams(newParams);
+                    updateMonth(e.target.value);
                   }}
                   className="border border-[#E2E8F0] rounded-xl px-3 py-1.5 text-xs bg-white font-bold text-text-secondary hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-[#A60069]/20 cursor-pointer h-[34px] shadow-sm transition-all"
                   aria-label="Selecionar mês"
@@ -251,6 +279,7 @@ export function Layout() {
                     </option>
                   ))}
                 </select>
+              </div>
               </div>
             ) : location.pathname === "/relatorios" ? (
               <div className="no-print flex items-center gap-2 flex-wrap">
