@@ -1,0 +1,27 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isUniodontoUser() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email.matches("^.*@uniodonto\\.com$");
+    }
+
+    match /accounts/{email} {
+      allow read, write: if isSignedIn() && request.auth.token.email == email;
+    }
+
+    match /users/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    match /organizations/uniodonto/{document=**} {
+      allow read, write: if isUniodontoUser();
+    }
+  }
+}

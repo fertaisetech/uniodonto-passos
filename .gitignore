@@ -1,0 +1,12 @@
+node_modules/
+build/
+dist/
+coverage/
+.firebase/
+logs/
+.DS_Store
+*.log
+firebase-debug.log
+.tmp-*.png
+.env*
+!.env.example

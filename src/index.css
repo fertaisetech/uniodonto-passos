@@ -1,0 +1,216 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #A60069;
+  --color-primary-dark: #810E56;
+  --color-pink: #FF637E;
+  --color-pink-soft: #FF9FAD;
+  --color-purple: #BF9CFF;
+  --color-cyan: #60EBFF;
+  --color-lime: #E1FF7B;
+  --color-background: #F8FAFC;
+  --color-surface: #FFFFFF;
+  --color-text-primary: #0F172A;
+  --color-text-secondary: #64748B;
+  --color-border: #E2E8F0;
+  --color-success: #16A34A;
+  --color-warning: #F59E0B;
+  --color-danger: #DC2626;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+  /* Optional subtle background gradient to make the frosted glass pop */
+  background-image: radial-gradient(circle at 15% 50%, rgba(166, 0, 105, 0.04), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(96, 235, 255, 0.04), transparent 25%);
+  background-attachment: fixed;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(166, 0, 105, 0.16);
+}
+
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+select:focus:not(:focus-visible),
+textarea:focus:not(:focus-visible),
+[role="button"]:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+}
+
+.dashboard-header {
+  min-height: 88px;
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto auto;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 30px;
+  background: #ffffff;
+  border-bottom: 1px solid #dce3ec;
+  box-sizing: border-box;
+}
+
+.dashboard-header__page {
+  min-width: 0;
+}
+
+.dashboard-header__page h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #101828;
+}
+
+.dashboard-header__page p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #64748b;
+}
+
+.dashboard-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.dashboard-header__profile {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-left: 20px;
+  border-left: 1px solid #e2e8f0;
+}
+
+.dashboard-content {
+  padding-top: 20px;
+}
+
+@media (max-width: 1100px) {
+  .dashboard-header {
+    grid-template-columns: 1fr auto;
+  }
+
+  .dashboard-header__profile {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard-header {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  .dashboard-header__page h1 {
+    font-size: 20px;
+  }
+
+  .dashboard-header__page p {
+    font-size: 12px;
+  }
+
+  .dashboard-header__actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .dashboard-header__actions select,
+  .dashboard-header__actions button {
+    flex: 1 1 160px;
+    min-width: 0;
+  }
+
+  .dashboard-header__actions > * {
+    min-width: 0;
+  }
+}
+
+/* Styles specifically for PDF Download & High Quality Printing */
+@media print {
+  body {
+    background-color: #ffffff !important;
+    background-image: none !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+  
+  #root, 
+  #root > div, 
+  .flex.h-screen {
+    height: auto !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+
+  .dashboard-header,
+  header,
+  .no-print,
+  button,
+  footer {
+    display: none !important;
+  }
+
+  /* Make main content occupy full width without flex or standard hidden limits */
+  main,
+  .flex-1 {
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Clean print spacing and eliminate layouts for full page readability */
+  .grid {
+    display: block !important;
+    gap: 0 !important;
+  }
+  
+  .xl\:col-span-2 {
+    width: 100% !important;
+  }
+
+  /* Ensure card has clean styling for physical or PDF pages */
+  .glass-card, .bg-white {
+    background: #ffffff !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* Force background colors and graphical elements to render correctly in output PDF */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    box-shadow: none !important;
+  }
+}
