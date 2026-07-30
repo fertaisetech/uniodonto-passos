@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isUniodontoUser() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && (request.auth.token.email.matches("^.*@uniodonto\\.com$")
+          || request.auth.token.email == "fertaisetech@gmail.com");
+    }
+
+    match /profile-photos/{uid}/{allPaths=**} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    match /team-member-photos/{allPaths=**} {
+      allow read, write: if isUniodontoUser();
+    }
+
+    match /organizations/uniodonto/{allPaths=**} {
+      allow read, write: if isUniodontoUser();
+    }
+  }
+}

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-BR" class="notranslate">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="google" content="notranslate" />
+    <meta name="theme-color" content="#CD176D" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Uniodonto BI" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/favicon-16.png" type="image/png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>Uniodonto BI - Painel de Gestão</title>
+  </head>
+  <body translate="no" class="notranslate">
+    <div id="root" class="notranslate"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', async () => {
+          const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+          if (isLocal) {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(registrations.map((registration) => registration.unregister()));
+            const cacheNames = await caches.keys();
+            await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+            return;
+          }
+
+          navigator.serviceWorker.register('/sw.js')
+            .then((reg) => console.log('SW registered with scope:', reg.scope))
+            .catch((err) => console.error('SW registration failed:', err));
+        });
+      }
+    </script>
+  </body>
+</html>

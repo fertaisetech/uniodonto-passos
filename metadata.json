@@ -1,0 +1,6 @@
+{
+  "name": "Uniodonto BI",
+  "description": "Painel de Business Intelligence e Gestão de Vendas da Uniodonto",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
