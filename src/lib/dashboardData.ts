@@ -1,5 +1,5 @@
 import { doc, getDoc, onSnapshot, setDoc, serverTimestamp, type DocumentData } from "firebase/firestore";
-import { db, type AppUserProfile } from "./firebase";
+import { auth, db, type AppUserProfile } from "./firebase";
 
 export type MonthKey = string;
 
@@ -65,7 +65,7 @@ export interface MonthlyDashboardDocument {
   npsData: NpsDataPoint[];
   investments: InvestmentItem[];
   metrics: MetricItem[];
-  cancellationReasons: Array<{ reason: "Demissão" | "Desligamento" | "Cancelamento do usuário" | "Outro"; count: number }>;
+  cancellationReasons: Array<{ reason: "CPF/CNPJ retornando" | "Cancelamento" | "Demissão" | "Pediu as contas" | "Mudança" | "Outros"; count: number }>;
   updatedAt?: unknown;
   updatedBy?: AppUserProfile | null;
 }
@@ -157,10 +157,12 @@ const buildMonthlyDocument = (month: MonthKey): MonthlyDashboardDocument => {
     nps: makeMetric(scale(80), 0.95, 1.05),
   };
   const cancellationReasons = [
-    { reason: "Demissão" as const, count: scale(6) },
-    { reason: "Desligamento" as const, count: scale(5) },
-    { reason: "Cancelamento do usuário" as const, count: scale(4) },
-    { reason: "Outro" as const, count: scale(3) },
+    { reason: "CPF/CNPJ retornando" as const, count: scale(3) },
+    { reason: "Cancelamento" as const, count: scale(4) },
+    { reason: "Demissão" as const, count: scale(3) },
+    { reason: "Pediu as contas" as const, count: scale(2) },
+    { reason: "Mudança" as const, count: scale(2) },
+    { reason: "Outros" as const, count: scale(1) },
   ];
 
   const beneficiariesData: BeneficiariesData = {
@@ -324,6 +326,16 @@ export const subscribeMonthlyDashboard = (
   month: MonthKey,
   handler: MonthlyDashboardSnapshotHandler
 ) => {
+  const localData = readLocalMonthlyDashboard(month);
+
+  // A local UI session without Firebase Auth cannot read Firestore. Avoid
+  // opening a listener that will only generate permission errors; the local
+  // copy remains available until the user authenticates.
+  if (!auth.currentUser) {
+    handler(localData, new Error("Usuário não autenticado no Firebase."));
+    return () => undefined;
+  }
+
   const unsubscribeRemote = onSnapshot(
     monthDocRef(month),
     (snap) => {
@@ -345,7 +357,6 @@ export const subscribeMonthlyDashboard = (
     }
   );
 
-  const localData = readLocalMonthlyDashboard(month);
   if (localData) handler(localData);
 
   return () => {
@@ -365,6 +376,7 @@ export const buildRecordFromEnvioState = (payload: {
   npsData?: NpsDataPoint[];
   investments: InvestmentItem[];
   metrics: MetricItem[];
+  cancellationReasons?: MonthlyDashboardDocument["cancellationReasons"];
   month: MonthKey;
 }): MonthlyDashboardDocument => normalizeInvestmentSummary({
   month: payload.month,

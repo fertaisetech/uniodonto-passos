@@ -52,6 +52,7 @@ export function EnvioIntegracao() {
   const selectedMonth = searchParams.get("month") || getCurrentMonthKey();
   const { data: dashboardData, loading, error } = useMonthlyDashboard(selectedMonth);
   const { profile } = useAppSession();
+  const baseSummary = dashboardData?.summary;
 
   const buildResumoItems = (summary: SummaryData): ResumoCardItem[] => ([
     { id: "ben_ativos", label: "Beneficiários Ativos", checked: true, value: summary.beneficiaries.current, unit: "PESSOAS", tooltip: "Total de beneficiários ativos no mês" },
@@ -71,6 +72,7 @@ export function EnvioIntegracao() {
 
   // 3. STATE - Column 3 (Tráfego, Canais & Campanhas)
   const [metrics, setMetrics] = useState<PerformanceMetricItem[]>([]);
+  const [trafficFilter, setTrafficFilter] = useState<"Geral" | "Meta" | "Google" | "Mídia Offline">("Geral");
   const [cancellationReasons, setCancellationReasons] = useState<NonNullable<MonthlyDashboardDocument["cancellationReasons"]>>([]);
 
   // Modals & UI States
@@ -93,27 +95,6 @@ export function EnvioIntegracao() {
     setMetrics(dashboardData.metrics);
     setCancellationReasons(dashboardData.cancellationReasons);
   }, [dashboardData, selectedMonth]);
-
-  // Keep edits available immediately in the local dashboard, even if the user
-  // changes month before pressing the explicit save button.
-  useEffect(() => {
-    if (!dashboardData || investimentos.length === 0 || resumoItems.length === 0) return;
-    try {
-      const localRecord = buildRecordFromEnvioState({
-        month: selectedMonth,
-        summary: buildSummaryForSave(),
-        beneficiariesData: dashboardData.beneficiariesData,
-        funnelData: dashboardData.funnelData,
-        npsData: dashboardData.npsData,
-        investments: investimentos,
-        metrics,
-        cancellationReasons,
-      });
-      localStorage.setItem(`uniodonto_monthly_dashboard_${selectedMonth}`, JSON.stringify(localRecord));
-    } catch {
-      // The explicit save still reports errors to the user when persistence fails.
-    }
-  }, [dashboardData, selectedMonth, resumoItems, investimentos, metrics, cancellationReasons]);
 
   // Math Auto-Updates
   // Total Invested (from checked column 2 rows)
@@ -160,6 +141,8 @@ export function EnvioIntegracao() {
   }, [totalInvestido, conversoesCount, resumoItems]);
 
   const buildSummaryForSave = (): SummaryData => {
+    if (!baseSummary) return {} as SummaryData;
+
     const makeMetric = (current: number, previous: number, target?: number) => ({
       current,
       previous,
@@ -181,13 +164,31 @@ export function EnvioIntegracao() {
     };
   };
 
+  // Keep edits available immediately in the local dashboard, even if the user
+  // changes month before pressing the explicit save button.
+  useEffect(() => {
+    if (!dashboardData || investimentos.length === 0 || resumoItems.length === 0) return;
+    const localRecord = buildRecordFromEnvioState({
+      month: selectedMonth,
+      summary: buildSummaryForSave(),
+      beneficiariesData: dashboardData.beneficiariesData,
+      funnelData: dashboardData.funnelData,
+      npsData: dashboardData.npsData,
+      investments: investimentos,
+      metrics,
+      cancellationReasons,
+    });
+    localStorage.setItem(`uniodonto_monthly_dashboard_${selectedMonth}`, JSON.stringify(localRecord));
+  }, [dashboardData, selectedMonth, resumoItems, investimentos, metrics, cancellationReasons]);
+
   // Actions for Column 1 (Resumo geral)
   const handleToggleResumo = (id: string) => {
     setResumoItems(prev => prev.map(item => item.id === id ? { ...item, checked: !item.checked } : item));
   };
 
   const handleUpdateResumoValue = (id: string, newVal: string) => {
-    const num = Math.max(0, Number(newVal) || 0);
+    const max = id === "nps" ? 100 : Number.POSITIVE_INFINITY;
+    const num = Math.min(max, Math.max(0, Number(newVal) || 0));
     // Update both column 1 inputs and trigger updates in column 3 matching values
     setResumoItems(prev => prev.map(item => item.id === id ? { ...item, value: num } : item));
 
@@ -288,6 +289,14 @@ export function EnvioIntegracao() {
     triggerToast("Nova campanha de tráfego adicionada.", "success");
   };
 
+  const filteredMetrics = metrics.filter((item) => {
+    if (trafficFilter === "Geral") return true;
+    const source = `${item.category} ${item.label}`.toLowerCase();
+    if (trafficFilter === "Meta") return /meta|facebook|instagram/.test(source);
+    if (trafficFilter === "Google") return /google/.test(source);
+    return /offline|rádio|jornal|telão|painel/.test(source);
+  });
+
   // Submission Flow
   const handleConfirmAll = () => {
     setShowSubmitModal(true);
@@ -296,6 +305,15 @@ export function EnvioIntegracao() {
   const executeSubmission = async () => {
     setIsSubmitting(true);
     try {
+      const invalidResumo = resumoItems.find((item) => item.checked && (!Number.isFinite(item.value) || item.value < 0 || (item.id === "nps" && item.value > 100)));
+      const invalidMetric = metrics.find((item) => item.checked && !item.value.trim());
+      if (invalidResumo || invalidMetric) {
+        triggerToast(
+          invalidResumo?.id === "nps" ? "O NPS deve estar entre 0 e 100." : "Preencha todos os campos obrigatórios antes de salvar.",
+          "error"
+        );
+        return;
+      }
       const record = buildRecordFromEnvioState({
         month: selectedMonth,
         summary: buildSummaryForSave(),
@@ -353,8 +371,6 @@ export function EnvioIntegracao() {
       </div>
     );
   }
-
-  const baseSummary = dashboardData.summary;
 
   return (
     <div className="flex flex-col h-full overflow-hidden select-none">
@@ -424,6 +440,9 @@ export function EnvioIntegracao() {
                   <input
                     type="number"
                     disabled={!item.checked}
+                    required={item.checked}
+                    min="0"
+                    max={item.id === "nps" ? "100" : undefined}
                     value={item.value}
                     onChange={(e) => handleUpdateResumoValue(item.id, e.target.value)}
                     className="w-full text-right outline-none text-xs font-black text-slate-800 bg-transparent disabled:text-slate-400 disabled:cursor-not-allowed font-mono"
@@ -604,6 +623,8 @@ export function EnvioIntegracao() {
                         <input
                           type="number"
                           disabled={!item.checked}
+                          required={item.checked}
+                          min="0"
                           value={item.value || ""}
                           onChange={(e) => handleUpdateInvestimentoValue(item.id, e.target.value)}
                           placeholder="0,00"
@@ -668,6 +689,23 @@ export function EnvioIntegracao() {
             </button>
           </div>
 
+          <div className="px-4 py-2 border-b border-slate-100 flex items-center gap-1.5 overflow-x-auto">
+            {(["Geral", "Meta", "Google", "Mídia Offline"] as const).map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                onClick={() => setTrafficFilter(filter)}
+                className={`shrink-0 px-2.5 py-1 rounded-lg text-[9px] font-black transition-all ${
+                  trafficFilter === filter
+                    ? "bg-[#A60069] text-white shadow-sm"
+                    : "bg-slate-50 text-slate-500 hover:bg-pink-50 hover:text-[#CD176D]"
+                }`}
+              >
+                {filter}
+              </button>
+            ))}
+          </div>
+
           {/* Performance Table */}
           <div className="flex-1 overflow-y-auto pr-1 overflow-x-hidden min-h-0">
             <table className="w-full text-left border-collapse table-auto">
@@ -681,7 +719,7 @@ export function EnvioIntegracao() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {metrics.map((item) => (
+                {filteredMetrics.map((item) => (
                   <tr 
                     key={item.id} 
                     className={`hover:bg-slate-50/50 transition-colors group ${
@@ -743,9 +781,10 @@ export function EnvioIntegracao() {
                     {/* Value Field */}
                     <td className="py-2 text-right pr-2">
                       <div className="flex items-center justify-end bg-slate-5/40 focus-within:bg-white border border-slate-200/50 rounded-xl px-1.5 py-1 w-24 ml-auto">
-                        <input
-                          type="text"
-                          disabled={!item.checked || item.id === "ctr" || item.id === "cpc"}
+                          <input
+                            type="text"
+                            disabled={!item.checked || item.id === "ctr" || item.id === "cpc"}
+                            required={item.checked && item.id !== "ctr" && item.id !== "cpc"}
                           value={
                             item.id === "ctr" 
                               ? `${formatBRL(3250 / 150000 * 100)} %` 

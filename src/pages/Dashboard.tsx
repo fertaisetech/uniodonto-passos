@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router";
 import { useMonthlyDashboard } from "../hooks/useMonthlyDashboard";
+import { getCurrentMonthKey, getDefaultMonthlyDashboard } from "../lib/dashboardData";
 import { 
   Users, 
   Target, 
@@ -34,11 +35,11 @@ import {
 
 export function Dashboard() {
   const [searchParams] = useSearchParams();
-  const selectedMonth = searchParams.get("month") || "Maio/2026";
+  const selectedMonth = searchParams.get("month") || getCurrentMonthKey();
   const currentTab = (searchParams.get("tab") || "Geral") as "Geral" | "Marketing" | "Crescimento";
   const [darkCardTab, setDarkCardTab] = useState<"Meta" | "Google" | "Offline">("Meta");
   const [summaryPeriod, setSummaryPeriod] = useState<"current" | "all">("current");
-  const [middleCardTab, setMiddleCardTab] = useState<"Funil" | "Planos" | "Evolução" | "Cancelamentos">("Funil");
+  const [middleCardTab, setMiddleCardTab] = useState<"Funil" | "Planos" | "Evolução">("Funil");
   const [investFilterTab, setInvestFilterTab] = useState<"Todos" | "Marketing" | "Ads" | "Offline" | "Ferramentas">("Todos");
   const { data: dashboardData, loading } = useMonthlyDashboard(selectedMonth);
 
@@ -51,6 +52,27 @@ export function Dashboard() {
   }
 
   const { summary, cancellationReasons } = dashboardData;
+  const monthIndex = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+    .findIndex((name) => selectedMonth.startsWith(name));
+  const periodRecords = summaryPeriod === "all"
+    ? Array.from({ length: Math.max(1, monthIndex + 1) }, (_, index) => {
+        const month = `${["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"][index]}/${selectedMonth.split("/")[1] || "2026"}`;
+        try {
+          const saved = localStorage.getItem(`uniodonto_monthly_dashboard_${month}`);
+          return saved ? JSON.parse(saved) : getDefaultMonthlyDashboard(month);
+        } catch {
+          return getDefaultMonthlyDashboard(month);
+        }
+      })
+    : [dashboardData];
+  const periodSummary = periodRecords.reduce((acc, record) => ({
+    ...acc,
+    leads: { ...acc.leads, current: acc.leads.current + record.summary.leads.current },
+    sales: { ...acc.sales, current: acc.sales.current + record.summary.sales.current },
+    appointments: { ...acc.appointments, current: acc.appointments.current + record.summary.appointments.current },
+  }), { ...summary, leads: { ...summary.leads, current: 0 }, sales: { ...summary.sales, current: 0 }, appointments: { ...summary.appointments, current: 0 } });
+  const periodInvestments = periodRecords.flatMap((record) => record.investments || []);
+  const periodMetrics = periodRecords.flatMap((record) => record.metrics || []);
   const weeklyAdDataGoogle = dashboardData.funnelData.map((item) => ({
     day: item.stage,
     value: item.count,
@@ -63,7 +85,7 @@ export function Dashboard() {
     day: item.date,
     value: item.count,
   }));
-  const investmentList = dashboardData.investments.map((item) => ({
+  const investmentList = periodInvestments.filter((item) => item.checked).map((item) => ({
     month: selectedMonth,
     type: item.category === "Software" ? "Ferramentas" : item.category,
     label: item.source,
@@ -101,9 +123,21 @@ export function Dashboard() {
   const cityRankingData = dashboardData.beneficiariesData.evolution.slice(-5).map((item, index, arr) => {
     const previous = index > 0 ? arr[index - 1].count : item.count;
     const variation = previous === 0 ? 0 : Number((((item.count - previous) / previous) * 100).toFixed(1));
+    const [year, monthNumber] = item.date.split("-");
+    const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+    const monthKey = `${monthNames[Math.max(0, Number(monthNumber) - 1)]}/${year}`;
+    let monthRecord = getDefaultMonthlyDashboard(monthKey);
+    try {
+      const saved = localStorage.getItem(`uniodonto_monthly_dashboard_${monthKey}`);
+      if (saved) monthRecord = JSON.parse(saved);
+    } catch {
+      // Use the deterministic monthly baseline when no local record exists.
+    }
     return {
       name: item.date,
       value: item.count.toLocaleString("pt-BR"),
+      entries: monthRecord.summary.additions.current,
+      cancellations: monthRecord.summary.cancellations.current,
       variation: `${variation >= 0 ? "+" : ""}${variation}%`,
       isPositive: variation >= 0,
     };
@@ -129,21 +163,31 @@ export function Dashboard() {
   };
 
   const channelInfo = {
-    Meta: { investment: channelChartData[0].data.reduce((total, item) => total + item.value, 0), campaigns: dashboardData.metrics.filter((item) => /meta/i.test(item.category)).length },
-    Google: { investment: channelChartData[1].data.reduce((total, item) => total + item.value, 0), campaigns: dashboardData.metrics.filter((item) => /google/i.test(item.category)).length },
+    Meta: { investment: channelChartData[0].data.reduce((total, item) => total + item.value, 0), campaigns: periodMetrics.filter((item) => item.checked && /meta/i.test(item.category)).length },
+    Google: { investment: channelChartData[1].data.reduce((total, item) => total + item.value, 0), campaigns: periodMetrics.filter((item) => item.checked && /google/i.test(item.category)).length },
     Offline: { investment: channelChartData[2].data.reduce((total, item) => total + item.value, 0), campaigns: channelChartData[2].data.length },
   };
 
+  const metricNumber = (id: string, label: string) => {
+    const item = periodMetrics.find((metric) => metric.checked && (metric.id === id || metric.label.toLowerCase() === label.toLowerCase()));
+    return Number((item?.value || "0").replace(/[^0-9,.-]/g, "").replace(/\./g, "").replace(",", ".")) || 0;
+  };
+  const impressions = metricNumber("imp", "Impressões");
+  const clicks = metricNumber("clic", "Cliques");
+
   const getWeeklyData = () => channelData[darkCardTab];
+  const channelAccent = darkCardTab === "Meta" ? "#1877F2" : darkCardTab === "Google" ? "#4285F4" : "#EAB308";
+  const googleBarPalette = ["#4285F4", "#DB4437", "#F4B400", "#0F9D58"];
 
   const getSubMetrics = () => {
     return {
-      views: String(summary.leads.current),
+      impressions: impressions.toLocaleString("pt-BR"),
+      clicks: clicks.toLocaleString("pt-BR"),
+    leads: String(periodSummary.leads.current),
       camp: String(channelInfo[darkCardTab].campaigns),
       invested: channelInfo[darkCardTab].investment.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      leads: String(summary.leads.current),
-      conv: String(summary.sales.current),
-      txAgend: `${((summary.appointments.current / Math.max(summary.leads.current, 1)) * 100).toFixed(1)}%`
+      conv: String(periodSummary.sales.current),
+      txAgend: `${((periodSummary.appointments.current / Math.max(periodSummary.leads.current, 1)) * 100).toFixed(1)}%`
     };
   };
 
@@ -384,7 +428,7 @@ export function Dashboard() {
                       onClick={() => setSummaryPeriod("all")}
                       className={`px-2 py-1 text-[9px] font-bold rounded transition-all ${summaryPeriod === "all" ? "bg-[#A60069] text-white shadow" : "text-white/60 hover:text-white"}`}
                     >
-                      Todos até atual
+                      Todos
                     </button>
                   </div>
                 
@@ -405,22 +449,34 @@ export function Dashboard() {
               </div>
 
               <div className="h-[140px] lg:h-[115px] lg:flex-1 w-full min-h-[110px]">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                   <BarChart data={getWeeklyData()} margin={{ top: 5, right: 5, left: -35, bottom: -5 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.06)" />
                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: "rgba(255,255,255,0.5)" }} />
                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: "rgba(255,255,255,0.5)" }} />
                     <Tooltip contentStyle={{ backgroundColor: "#1c0b1e", borderColor: "#411445", color: "white", borderRadius: "8px", fontSize: "10px" }} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-                    <Bar dataKey="value" fill={darkCardTab === "Google" ? "#4285F4" : darkCardTab === "Offline" ? "#EAB308" : "#D62976"} stroke="none" radius={[4, 4, 0, 0]} maxBarSize={18} />
+                  <Bar dataKey="value" fill={channelAccent} stroke="none" radius={[4, 4, 0, 0]} maxBarSize={18}>
+                    {getWeeklyData().map((entry, index) => (
+                      <Cell key={`channel-bar-${entry.name}-${index}`} fill={darkCardTab === "Google" ? googleBarPalette[index % googleBarPalette.length] : channelAccent} />
+                    ))}
+                  </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
 
               {/* Submetrics Grid Inside Left Dark Card */}
-              <div className="grid grid-cols-3 gap-1.5 mt-3 shrink-0">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mt-3 shrink-0">
                 <div className="bg-white/5 rounded-xl border border-white/10 p-2 flex flex-col justify-between">
-                  <span className="text-[8px] uppercase tracking-wider font-extrabold text-white/50 leading-none">Leads do canal</span>
-                  <span className="text-sm font-extrabold mt-1 text-white leading-none">{subMetrics.views}</span>
+                  <span className="text-[8px] uppercase tracking-wider font-extrabold text-white/50 leading-none">Impressões</span>
+                  <span className="text-sm font-extrabold mt-1 text-white leading-none">{subMetrics.impressions}</span>
+                </div>
+                <div className="bg-white/5 rounded-xl border border-white/10 p-2 flex flex-col justify-between">
+                  <span className="text-[8px] uppercase tracking-wider font-extrabold text-white/50 leading-none">Cliques</span>
+                  <span className="text-sm font-extrabold mt-1 leading-none" style={{ color: channelAccent }}>{subMetrics.clicks}</span>
+                </div>
+                <div className="bg-white/5 rounded-xl border border-white/10 p-2 flex flex-col justify-between">
+                  <span className="text-[8px] uppercase tracking-wider font-extrabold text-white/50 leading-none">Leads</span>
+                  <span className="text-sm font-extrabold mt-1 leading-none" style={{ color: channelAccent }}>{subMetrics.leads}</span>
                 </div>
                 <div className="bg-white/5 rounded-xl border border-white/10 p-2 flex flex-col justify-between">
                   <span className="text-[8px] uppercase tracking-wider font-extrabold text-white/50 leading-none">Campanhas</span>
@@ -434,10 +490,6 @@ export function Dashboard() {
                   <span className="text-sm font-extrabold mt-1 text-white leading-none">{subMetrics.invested}</span>
                 </div>
                 <div className="bg-white/5 rounded-xl border border-white/10 p-2 flex flex-col justify-between max-h-[46px]">
-                  <span className="text-[8px] uppercase tracking-wider font-extrabold text-white/50 leading-none">Leads totais</span>
-                  <span className="text-sm font-extrabold mt-1 text-[#FF637E] leading-none">{subMetrics.leads}</span>
-                </div>
-                <div className="bg-white/5 rounded-xl border border-white/10 p-2 flex flex-col justify-between max-h-[46px]">
                   <span className="text-[8px] uppercase tracking-wider font-extrabold text-white/50 leading-none">Conversões</span>
                   <span className="text-sm font-extrabold mt-1 text-white leading-none">{subMetrics.conv}</span>
                 </div>
@@ -447,7 +499,7 @@ export function Dashboard() {
                 </div>
               </div>
               <p className="text-[8px] text-white/30 text-right mt-1.5 shrink-0">
-                Fonte: Envio de Dados ({summaryPeriod === "current" ? selectedMonth : `todos até ${selectedMonth}`})
+                Fonte: Envio de Dados ({summaryPeriod === "current" ? "mês atual" : "todos"})
               </p>
             </div>
 
@@ -459,7 +511,6 @@ export function Dashboard() {
                   { id: "Funil", label: "Funil de Conversão" },
                   { id: "Planos", label: "Distribuição por Plano" },
                   { id: "Evolução", label: "Evolução Mensal" },
-                  { id: "Cancelamentos", label: "Cancelamentos" }
                 ].map((tab) => (
                   <button
                     key={tab.id}
@@ -556,7 +607,7 @@ export function Dashboard() {
                   <div className="flex flex-col items-center justify-center h-auto lg:h-full py-2">
                     <span className="text-[10px] text-text-secondary font-bold mb-1">Distribuição por Plano</span>
                     <div className="h-[105px] w-full relative flex items-center justify-center">
-                      <ResponsiveContainer width="100%" height={105}>
+                      <ResponsiveContainer width="100%" height={105} minWidth={1} minHeight={1}>
                         <PieChart>
                           <Pie
                             data={leadsOriginData}
@@ -590,10 +641,22 @@ export function Dashboard() {
                 )}
 
                 {middleCardTab === "Evolução" && (
-                  <div className="space-y-1.5 h-full flex flex-col justify-center">
+                  <div className="space-y-3 h-full flex flex-col justify-center">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-3">
+                        <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700">Entradas de novos</span>
+                        <strong className="block mt-1 text-xl font-black text-emerald-800">{summary.additions.current.toLocaleString("pt-BR")}</strong>
+                        <span className="text-[9px] font-bold text-emerald-600">Novos beneficiários</span>
+                      </div>
+                      <div className="rounded-xl border border-rose-100 bg-rose-50/70 p-3">
+                        <span className="text-[9px] font-black uppercase tracking-wider text-rose-700">Cancelamentos</span>
+                        <strong className="block mt-1 text-xl font-black text-rose-800">{summary.cancellations.current.toLocaleString("pt-BR")}</strong>
+                        <span className="text-[9px] font-bold text-rose-600">Exclusões no mês</span>
+                      </div>
+                    </div>
                     <div className="flex justify-between items-center text-[9px] font-bold text-text-secondary pb-1 border-b border-border">
                       <span>Mês</span>
-                      <span>Beneficiários Ativos</span>
+                      <span>Ativos · Entradas · Cancelamentos</span>
                     </div>
                     {cityRankingData.map((city, index) => (
                       <div key={index} className="flex justify-between items-center text-[11px] py-1 border-b border-border last:border-b-0 leading-tight">
@@ -603,6 +666,8 @@ export function Dashboard() {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="font-extrabold text-text-primary">{city.value}</span>
+                          <span className="text-[9px] font-bold text-emerald-600">+{city.entries}</span>
+                          <span className="text-[9px] font-bold text-rose-600">-{city.cancellations}</span>
                           <span className={`text-[9px] font-bold ${city.isPositive ? "text-success" : "text-danger"}`}>
                             {city.variation}
                           </span>
@@ -612,33 +677,6 @@ export function Dashboard() {
                   </div>
                 )}
 
-                {middleCardTab === "Cancelamentos" && (
-                  <div className="h-full flex flex-col justify-center gap-3 px-2">
-                    <div className="flex items-center justify-between border-b border-border pb-2">
-                      <div>
-                        <h4 className="text-sm font-black text-text-primary">Cancelamentos por motivo</h4>
-                        <p className="text-[9px] text-text-secondary">Dados do mês selecionado</p>
-                      </div>
-                      <span className="text-xl font-black text-[#CD176D]">
-                        {cancellationReasons.reduce((sum, item) => sum + item.count, 0)}
-                      </span>
-                    </div>
-                    {cancellationReasons.map((item) => {
-                      const total = Math.max(cancellationReasons.reduce((sum, entry) => sum + entry.count, 0), 1);
-                      const percentage = Math.round((item.count / total) * 100);
-                      return (
-                        <div key={item.reason}>
-                          <div className="flex justify-between text-[10px] font-bold text-text-secondary mb-1">
-                            <span>{item.reason}</span><span>{item.count} ({percentage}%)</span>
-                          </div>
-                          <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
-                            <div className="h-full rounded-full bg-[#CD176D]" style={{ width: `${percentage}%` }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
             </div>
 

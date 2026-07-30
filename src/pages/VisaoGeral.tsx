@@ -2,6 +2,7 @@ import { useSearchParams } from "react-router";
 import { KPICard } from "../components/KPICard";
 import { Users, Target, BarChart, DollarSign, UserCheck, Star, Zap, Phone, ShieldClose } from "lucide-react";
 import { useMonthlyDashboard } from "../hooks/useMonthlyDashboard";
+import { getCurrentMonthKey } from "../lib/dashboardData";
 import {
   AreaChart,
   Area,
@@ -19,7 +20,7 @@ import {
 
 export function VisaoGeral() {
   const [searchParams] = useSearchParams();
-  const month = searchParams.get("month") || "Maio/2026";
+  const month = searchParams.get("month") || getCurrentMonthKey();
   const { data: dashboardData, loading } = useMonthlyDashboard(month);
 
   if (loading || !dashboardData) {
@@ -74,7 +75,7 @@ export function VisaoGeral() {
         <div className="glass-card shadow-sm p-4 lg:p-4.5 lg:col-span-2">
           <h3 className="font-semibold text-text-primary mb-3.5">Evolução de Beneficiários</h3>
           <div className="h-[220px] sm:h-[270px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
               <AreaChart data={beneficiariesData?.evolution} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
@@ -99,7 +100,7 @@ export function VisaoGeral() {
         <div className="glass-card shadow-sm p-4 lg:p-4.5 lg:col-span-1">
           <h3 className="font-semibold text-text-primary mb-3.5">Funil de Conversão</h3>
           <div className="h-[220px] sm:h-[270px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
               <ReBarChart data={funnelData} layout="vertical" margin={{ top: 0, right: 20, left: 20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--color-border)" />
                 <XAxis type="number" hide />
@@ -116,7 +117,7 @@ export function VisaoGeral() {
         <div className="glass-card shadow-sm p-4 lg:p-4.5">
            <h3 className="font-semibold text-text-primary mb-3.5">Evolução do NPS</h3>
            <div className="h-[200px] sm:h-[220px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
               <LineChart data={npsData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
                 <XAxis dataKey="date" tick={{fontSize: 12, fill: 'var(--color-text-secondary)'}} axisLine={false} tickLine={false} />
@@ -131,7 +132,7 @@ export function VisaoGeral() {
         <div className="glass-card shadow-sm p-4 lg:p-4.5">
           <h3 className="font-semibold text-text-primary mb-3.5">Inclusões vs Cancelamentos</h3>
           <div className="h-[200px] sm:h-[220px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
               <ReBarChart data={npsData.map((d: any, i: number) => ({ date: d.date, Inclusões: 800 + i*50, Cancelamentos: 100 + i*10 }))} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
                 <XAxis dataKey="date" tick={{fontSize: 12, fill: 'var(--color-text-secondary)'}} axisLine={false} tickLine={false} />
