@@ -1,5 +1,15 @@
-import { doc, getDoc, onSnapshot, setDoc, serverTimestamp, type DocumentData } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  onSnapshot,
+  setDoc,
+  serverTimestamp,
+  type DocumentData,
+} from "firebase/firestore";
 import { auth, db, type AppUserProfile } from "./firebase";
+import { getMonthlyInvestmentValues } from "./investmentMonthlyData";
+import { getOfficialMetaAdsCampaigns } from "./metaAdsMonthlyData";
+import type { MonthlyOperationalData } from "./operationalSpreadsheet";
 
 export type MonthKey = string;
 
@@ -26,6 +36,11 @@ export interface SummaryData {
 export interface BeneficiariesData {
   evolution: Array<{ date: string; count: number }>;
   distribution: Array<{ plan: string; count: number }>;
+  cityMovement?: Array<{
+    city: string;
+    entries: number;
+    cancellations: number;
+  }>;
 }
 
 export interface FunnelDataPoint {
@@ -57,56 +72,311 @@ export interface MetricItem {
   isCustomCampaign?: boolean;
 }
 
+export type CampaignDataMode = "actual" | "simulated";
+
+export interface MetaAdsCampaign {
+  id: string;
+  channel: "Meta";
+  competence: MonthKey;
+  dataMode: CampaignDataMode;
+  campaignName: string;
+  campaignId?: string;
+  investment: number | null;
+  impressions: number | null;
+  reach?: number | null;
+  linkClicks: number | null;
+  leads: number | null;
+  pageViews: number | null;
+  lastUpdated: string;
+  notes?: string;
+  active: boolean;
+}
+
+export interface MetaAdsCalculatedMetrics {
+  ctr: number | null;
+  cpc: number | null;
+  cpm: number | null;
+  costPerView: number | null;
+  clickToPageRate: number | null;
+}
+
+export const calculateMetaAdsMetrics = (
+  campaign: Pick<MetaAdsCampaign, "investment" | "impressions" | "linkClicks" | "pageViews">,
+): MetaAdsCalculatedMetrics => {
+  const investment = Number(campaign.investment);
+  const impressions = Number(campaign.impressions);
+  const linkClicks = Number(campaign.linkClicks);
+  const pageViews = Number(campaign.pageViews);
+  const valid = (value: number) => Number.isFinite(value) && value >= 0;
+  const ratio = (numerator: number, denominator: number) =>
+    valid(numerator) && valid(denominator) && denominator > 0
+      ? (numerator / denominator) * 100
+      : null;
+
+  return {
+    ctr: ratio(linkClicks, impressions),
+    cpc: valid(investment) && valid(linkClicks) && linkClicks > 0 ? investment / linkClicks : null,
+    cpm: valid(investment) && valid(impressions) && impressions > 0 ? (investment / impressions) * 1000 : null,
+    // A planilha não traz visualizações de página. Nesse caso, usamos
+    // impressões como proxy explícito para o custo por visualização.
+    costPerView:
+      valid(investment) && valid(pageViews) && pageViews > 0
+        ? investment / pageViews
+        : valid(investment) && valid(impressions) && impressions > 0
+          ? investment / impressions
+          : null,
+    clickToPageRate: ratio(pageViews, linkClicks),
+  };
+};
+
 export interface MonthlyDashboardDocument {
   month: MonthKey;
+  dataVersion?: string;
   summary: SummaryData;
   beneficiariesData: BeneficiariesData;
   funnelData: FunnelDataPoint[];
   npsData: NpsDataPoint[];
   investments: InvestmentItem[];
   metrics: MetricItem[];
-  cancellationReasons: Array<{ reason: "CPF/CNPJ retornando" | "Cancelamento" | "Demissão" | "Pediu as contas" | "Mudança" | "Outros"; count: number }>;
+  metaAdsCampaigns?: MetaAdsCampaign[];
+  operationalData?: MonthlyOperationalData;
+  cancellationReasons: Array<{
+    reason:
+      | "CPF/CNPJ retornando"
+      | "Cancelamento"
+      | "Demissão"
+      | "Pediu as contas"
+      | "Mudança"
+      | "Outros";
+    count: number;
+  }>;
   updatedAt?: unknown;
   updatedBy?: AppUserProfile | null;
 }
 
 type MonthlyDashboardSnapshotHandler = (
   data: MonthlyDashboardDocument | null,
-  error?: Error | null
+  error?: Error | null,
 ) => void;
 
 const DEFAULT_MONTH = "Maio/2026";
 
 const baseInvestments: InvestmentItem[] = [
-  { id: "1", checked: true, source: "Rádio Vida (Passos)", category: "Offline", isFixed: false, value: 1750.0 },
-  { id: "2", checked: true, source: "Rádio (Itaú de Minas)", category: "Offline", isFixed: false, value: 240.0 },
-  { id: "3", checked: true, source: "Rádio (S. S. Paraíso)", category: "Offline", isFixed: false, value: 79.0 },
-  { id: "4", checked: true, source: "Rádio (Cássia)", category: "Offline", isFixed: false, value: 271.0 },
-  { id: "5", checked: true, source: "Jornal (Folha da Manhã)", category: "Offline", isFixed: false, value: 120.18 },
-  { id: "6", checked: true, source: "Telão/Painel LED (Paraíso)", category: "Offline", isFixed: false, value: 400.0 },
-  { id: "7", checked: true, source: "Meta (Facebook/Instagram)", category: "Ads", isFixed: false, value: 1242.0 },
-  { id: "8", checked: true, source: "Google Ads", category: "Ads", isFixed: false, value: 800.0 },
-  { id: "9", checked: true, source: "Agência de Marketing", category: "Marketing", isFixed: false, value: 2000.0 },
-  { id: "10", checked: true, source: "RD Station (Mkt e Conversas)", category: "Software", isFixed: false, value: 1121.0 },
-  { id: "11", checked: true, source: "RD Conversas", category: "Software", isFixed: false, value: 2087.28 },
-  { id: "12", checked: true, source: "RD Marketing", category: "Software", isFixed: false, value: 1121.0 },
-  { id: "13", checked: true, source: "RD CRM", category: "Software", isFixed: false, value: 786.0 },
-  { id: "14", checked: true, source: "FerTaise", category: "Software", isFixed: false, value: 2000.0 },
+  {
+    id: "1",
+    checked: true,
+    source: "Rádio Vida (Passos)",
+    category: "Offline",
+    isFixed: false,
+    value: 1750.0,
+  },
+  {
+    id: "2",
+    checked: true,
+    source: "Rádio (Itaú de Minas)",
+    category: "Offline",
+    isFixed: false,
+    value: 240.0,
+  },
+  {
+    id: "3",
+    checked: true,
+    source: "Rádio (S. S. Paraíso)",
+    category: "Offline",
+    isFixed: false,
+    value: 79.0,
+  },
+  {
+    id: "4",
+    checked: true,
+    source: "Rádio (Cássia)",
+    category: "Offline",
+    isFixed: false,
+    value: 271.0,
+  },
+  {
+    id: "5",
+    checked: true,
+    source: "Jornal (Folha da Manhã)",
+    category: "Offline",
+    isFixed: false,
+    value: 120.18,
+  },
+  {
+    id: "6",
+    checked: true,
+    source: "Telão/Painel LED (Paraíso)",
+    category: "Offline",
+    isFixed: false,
+    value: 400.0,
+  },
+  {
+    id: "7",
+    checked: true,
+    source: "Meta (Facebook/Instagram)",
+    category: "Ads",
+    isFixed: false,
+    value: 1242.0,
+  },
+  {
+    id: "8",
+    checked: true,
+    source: "Google Ads",
+    category: "Ads",
+    isFixed: false,
+    value: 800.0,
+  },
+  {
+    id: "9",
+    checked: true,
+    source: "Agência de Marketing",
+    category: "Marketing",
+    isFixed: false,
+    value: 2000.0,
+  },
+  {
+    id: "10",
+    checked: true,
+    source: "RD Station (Mkt e Conversas)",
+    category: "Software",
+    isFixed: false,
+    value: 1121.0,
+  },
+  {
+    id: "11",
+    checked: true,
+    source: "RD Conversas",
+    category: "Software",
+    isFixed: false,
+    value: 2087.28,
+  },
+  {
+    id: "12",
+    checked: true,
+    source: "RD Marketing",
+    category: "Software",
+    isFixed: false,
+    value: 1121.0,
+  },
+  {
+    id: "13",
+    checked: true,
+    source: "RD CRM",
+    category: "Software",
+    isFixed: false,
+    value: 786.0,
+  },
+  {
+    id: "14",
+    checked: true,
+    source: "FerTaise",
+    category: "Software",
+    isFixed: false,
+    value: 2000.0,
+  },
 ];
 
 const baseMetrics: MetricItem[] = [
-  { id: "impr", checked: true, label: "Impressões", category: "TODOS", value: "150.000", unit: "imp." },
-  { id: "clic", checked: true, label: "Cliques", category: "TODOS", value: "3.250", unit: "cliques" },
-  { id: "ctr", checked: true, label: "CTR", category: "TODOS", value: "2,17", unit: "%" },
-  { id: "cpc", checked: true, label: "CPC", category: "TODOS", value: "3,94", unit: "R$" },
-  { id: "leads_canal", checked: true, label: "Leads por Canal", category: "TODOS", value: "420", unit: "leads" },
-  { id: "conv_canal", checked: true, label: "Conversões por Canal", category: "TODOS", value: "86", unit: "vendas" },
-  { id: "agend", checked: true, label: "Agendamentos", category: "TODOS", value: "108", unit: "agend." },
-  { id: "vendas_canal", checked: true, label: "Vendas", category: "TODOS", value: "86", unit: "vendas" },
-  { id: "camp_g1", checked: true, label: "Google Ads - Captação Passos", category: "Google Ads", value: "Clique", unit: "", isCustomCampaign: true },
-  { id: "camp_g2", checked: true, label: "Google Ads - Plano Individual", category: "Google Ads", value: "Clique", unit: "", isCustomCampaign: true },
-  { id: "camp_m1", checked: true, label: "Meta Ads - Conversão Convênio", category: "Meta Ads", value: "Clique", unit: "", isCustomCampaign: true },
-  { id: "camp_m2", checked: true, label: "Meta Ads - Remarketing Família", category: "Meta Ads", value: "Clique", unit: "", isCustomCampaign: true },
+  {
+    id: "impr",
+    checked: true,
+    label: "Impressões",
+    category: "TODOS",
+    value: "150.000",
+    unit: "imp.",
+  },
+  {
+    id: "clic",
+    checked: true,
+    label: "Cliques",
+    category: "TODOS",
+    value: "3.250",
+    unit: "cliques",
+  },
+  {
+    id: "ctr",
+    checked: true,
+    label: "CTR",
+    category: "TODOS",
+    value: "2,17",
+    unit: "%",
+  },
+  {
+    id: "cpc",
+    checked: true,
+    label: "CPC",
+    category: "TODOS",
+    value: "3,94",
+    unit: "R$",
+  },
+  {
+    id: "leads_canal",
+    checked: true,
+    label: "Leads por Canal",
+    category: "TODOS",
+    value: "420",
+    unit: "leads",
+  },
+  {
+    id: "conv_canal",
+    checked: true,
+    label: "Conversões por Canal",
+    category: "TODOS",
+    value: "86",
+    unit: "vendas",
+  },
+  {
+    id: "agend",
+    checked: true,
+    label: "Agendamentos",
+    category: "TODOS",
+    value: "108",
+    unit: "agend.",
+  },
+  {
+    id: "vendas_canal",
+    checked: true,
+    label: "Vendas",
+    category: "TODOS",
+    value: "86",
+    unit: "vendas",
+  },
+  {
+    id: "camp_g1",
+    checked: true,
+    label: "Google Ads - Captação Passos",
+    category: "Google Ads",
+    value: "Clique",
+    unit: "",
+    isCustomCampaign: true,
+  },
+  {
+    id: "camp_g2",
+    checked: true,
+    label: "Google Ads - Plano Individual",
+    category: "Google Ads",
+    value: "Clique",
+    unit: "",
+    isCustomCampaign: true,
+  },
+  {
+    id: "camp_m1",
+    checked: true,
+    label: "Meta Ads - Conversão Convênio",
+    category: "Meta Ads",
+    value: "Clique",
+    unit: "",
+    isCustomCampaign: true,
+  },
+  {
+    id: "camp_m2",
+    checked: true,
+    label: "Meta Ads - Remarketing Família",
+    category: "Meta Ads",
+    value: "Clique",
+    unit: "",
+    isCustomCampaign: true,
+  },
 ];
 
 export const calculateInvestmentTotal = (investments: InvestmentItem[]) =>
@@ -114,31 +384,64 @@ export const calculateInvestmentTotal = (investments: InvestmentItem[]) =>
     investments
       .filter((item) => item.checked)
       .reduce((acc, curr) => acc + curr.value, 0)
-      .toFixed(2)
+      .toFixed(2),
   );
 
-const makeMetric = (current: number, previousFactor = 0.95, targetFactor = 1.1): SummaryMetric => {
-  const previous = current === 0 ? 0 : Number((current * previousFactor).toFixed(2));
-  const target = current === 0 ? 0 : Number((current * targetFactor).toFixed(2));
-  const variation = previous === 0 ? 0 : Number((((current - previous) / previous) * 100).toFixed(1));
+const makeMetric = (
+  current: number,
+  previousFactor = 0.95,
+  targetFactor = 1.1,
+): SummaryMetric => {
+  const previous =
+    current === 0 ? 0 : Number((current * previousFactor).toFixed(2));
+  const target =
+    current === 0 ? 0 : Number((current * targetFactor).toFixed(2));
+  const variation =
+    previous === 0
+      ? 0
+      : Number((((current - previous) / previous) * 100).toFixed(1));
   return { current, previous, variation, target };
 };
 
 const buildMonthlyDocument = (month: MonthKey): MonthlyDashboardDocument => {
-  const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+  const monthNames = [
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+  ];
   const [monthName, yearText] = month.split("/");
   const monthIndex = monthNames.indexOf(monthName);
   const year = Number(yearText) || 2026;
   const baseMonthIndex = 4;
-  const monthDistance = monthIndex < 0 ? 0 : (year - 2026) * 12 + monthIndex - baseMonthIndex;
-  const isFutureMonth = monthDistance > 0;
+  const monthDistance =
+    monthIndex < 0 ? 0 : (year - 2026) * 12 + monthIndex - baseMonthIndex;
   const variationFactor = Number(Math.pow(1.05, monthDistance).toFixed(6));
-  const scale = (value: number) => Number((value * (isFutureMonth ? 0 : variationFactor)).toFixed(2));
-  const investmentItems = isFutureMonth ? [] : baseInvestments.map((item) => ({ ...item, value: scale(item.value) }));
-  const metricItems = isFutureMonth ? [] : baseMetrics.map((item) => {
-    const numericValue = Number(item.value.replace(/[^0-9,-]/g, "").replace(",", "."));
-    if (!Number.isFinite(numericValue)) return { ...item, value: isFutureMonth ? "" : item.value };
-    const scaledValue = scale(numericValue).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+  // New months start with the previous period's baseline so the integration
+  // screen never opens empty when a new month begins. Users can then adjust
+  // and save the real values for that month.
+  const scale = (value: number) => Number((value * variationFactor).toFixed(2));
+  const monthlyInvestmentValues = getMonthlyInvestmentValues(month);
+  const investmentItems = baseInvestments.map((item) => ({
+    ...item,
+    value: monthlyInvestmentValues[item.id] ?? 0,
+  }));
+  const metricItems = baseMetrics.map((item) => {
+    const numericValue = Number(
+      item.value.replace(/[^0-9,-]/g, "").replace(",", "."),
+    );
+    if (!Number.isFinite(numericValue)) return { ...item, value: item.value };
+    const scaledValue = scale(numericValue).toLocaleString("pt-BR", {
+      maximumFractionDigits: 2,
+    });
     return { ...item, value: scaledValue };
   });
   const investmentTotal = calculateInvestmentTotal(investmentItems);
@@ -175,9 +478,10 @@ const buildMonthlyDocument = (month: MonthKey): MonthlyDashboardDocument => {
       { date: "2026-06", count: summary.beneficiaries.current },
     ],
     distribution: [
-      { plan: "Premium", count: scale(4200) },
-      { plan: "Standard", count: scale(3889) },
-      { plan: "Basic", count: scale(2200) },
+      { plan: "Passos", count: scale(4200) },
+      { plan: "Itaú de Minas", count: scale(3889) },
+      { plan: "S.S. Paraíso", count: scale(2200) },
+      { plan: "Cássia", count: scale(1070) },
     ],
   };
 
@@ -205,6 +509,7 @@ const buildMonthlyDocument = (month: MonthKey): MonthlyDashboardDocument => {
     npsData,
     investments: investmentItems,
     metrics: metricItems,
+    metaAdsCampaigns: getOfficialMetaAdsCampaigns(month),
     cancellationReasons,
   };
 };
@@ -214,28 +519,66 @@ const monthDocRef = (month: MonthKey) => {
   return doc(db, "organizations", "uniodonto", "months", monthId);
 };
 
-const normalizeDocument = (month: MonthKey, data: DocumentData | undefined | null): MonthlyDashboardDocument => {
+const normalizeDocument = (
+  month: MonthKey,
+  data: DocumentData | undefined | null,
+): MonthlyDashboardDocument => {
   const fallback = buildMonthlyDocument(month);
   if (!data) return fallback;
+
+  const rawBeneficiaries = data.beneficiariesData ?? fallback.beneficiariesData;
+  const cityNames = ["Passos", "Itaú de Minas", "S.S. Paraíso", "Cássia"];
+  const normalizedBeneficiaries = {
+    ...fallback.beneficiariesData,
+    ...rawBeneficiaries,
+    distribution: (Array.isArray(rawBeneficiaries.distribution)
+      ? rawBeneficiaries.distribution
+      : fallback.beneficiariesData.distribution
+    )
+      .slice(0, cityNames.length)
+      .map((item: { count?: number }, index: number) => ({
+        plan: cityNames[index],
+        count: Number(item.count) || 0,
+      })),
+  };
 
   return {
     ...fallback,
     ...data,
     month,
+    dataVersion: data.dataVersion ?? OFFICIAL_DATA_VERSION,
     summary: data.summary ?? fallback.summary,
-    beneficiariesData: data.beneficiariesData ?? fallback.beneficiariesData,
+    beneficiariesData: normalizedBeneficiaries,
     funnelData: data.funnelData ?? fallback.funnelData,
     npsData: data.npsData ?? fallback.npsData,
-    investments: data.investments ?? fallback.investments,
-    metrics: data.metrics ?? fallback.metrics,
-    cancellationReasons: data.cancellationReasons ?? fallback.cancellationReasons,
+    // Older future-month documents may exist with empty arrays. Treat those
+    // as uninitialized so the month receives the previous period baseline.
+    investments:
+      data.dataVersion === OFFICIAL_DATA_VERSION &&
+      Array.isArray(data.investments) &&
+      data.investments.length > 0
+        ? data.investments
+        : fallback.investments,
+    metrics:
+      Array.isArray(data.metrics) && data.metrics.length > 0
+        ? data.metrics
+        : fallback.metrics,
+    metaAdsCampaigns: Array.isArray(data.metaAdsCampaigns) && data.metaAdsCampaigns.length > 0
+      ? data.metaAdsCampaigns
+      : fallback.metaAdsCampaigns,
+    operationalData: data.operationalData,
+    cancellationReasons:
+      data.cancellationReasons ?? fallback.cancellationReasons,
   } as MonthlyDashboardDocument;
 };
 
-const normalizeInvestmentSummary = (record: MonthlyDashboardDocument): MonthlyDashboardDocument => {
+const normalizeInvestmentSummary = (
+  record: MonthlyDashboardDocument,
+): MonthlyDashboardDocument => {
   const investmentTotal = calculateInvestmentTotal(record.investments);
   const salesCurrent = record.summary.sales.current;
-  const cacCurrent = salesCurrent > 0 ? Number((investmentTotal / salesCurrent).toFixed(2)) : 0;
+  const cacCurrent =
+    salesCurrent > 0 ? Number((investmentTotal / salesCurrent).toFixed(2)) : 0;
   return {
     ...record,
     summary: {
@@ -245,43 +588,141 @@ const normalizeInvestmentSummary = (record: MonthlyDashboardDocument): MonthlyDa
         current: investmentTotal,
         previous: record.summary.investment.previous,
         target: record.summary.investment.target,
-        variation: record.summary.investment.previous === 0
-          ? 0
-          : Number((((investmentTotal - record.summary.investment.previous) / record.summary.investment.previous) * 100).toFixed(1)),
+        variation:
+          record.summary.investment.previous === 0
+            ? 0
+            : Number(
+                (
+                  ((investmentTotal - record.summary.investment.previous) /
+                    record.summary.investment.previous) *
+                  100
+                ).toFixed(1),
+              ),
       },
       cac: {
         ...record.summary.cac,
         current: cacCurrent,
-        variation: record.summary.cac.previous === 0
-          ? 0
-          : Number((((cacCurrent - record.summary.cac.previous) / record.summary.cac.previous) * 100).toFixed(1)),
+        variation:
+          record.summary.cac.previous === 0
+            ? 0
+            : Number(
+                (
+                  ((cacCurrent - record.summary.cac.previous) /
+                    record.summary.cac.previous) *
+                  100
+                ).toFixed(1),
+              ),
       },
     },
   };
 };
 
+export const applyOperationalDataToDocument = (
+  record: MonthlyDashboardDocument,
+  operationalData: MonthlyOperationalData,
+): MonthlyDashboardDocument => {
+  const entries = Number.isFinite(operationalData.entries) ? operationalData.entries : 0;
+  const cancellations = Number.isFinite(operationalData.cancellations) ? operationalData.cancellations : 0;
+  const cityMovement = operationalData.entriesByCity.map((city) => ({
+    city: city.cityName,
+    entries: city.entries,
+    cancellations: city.cancellations,
+  }));
+  const cancellationReasons = operationalData.cancellationReasons.map((item) => ({
+    reason: (item.reasonOriginal as MonthlyDashboardDocument["cancellationReasons"][number]["reason"]),
+    count: item.quantity,
+  }));
+
+  return normalizeInvestmentSummary({
+    ...record,
+    month: operationalMonthKeyForDocument(operationalData),
+    operationalData,
+    summary: {
+      ...record.summary,
+      additions: { ...record.summary.additions, current: entries },
+      cancellations: { ...record.summary.cancellations, current: cancellations },
+    },
+    beneficiariesData: {
+      ...record.beneficiariesData,
+      cityMovement,
+    },
+    cancellationReasons: cancellationReasons.length > 0
+      ? cancellationReasons
+      : record.cancellationReasons,
+  });
+};
+
+const operationalMonthKeyForDocument = (operationalData: MonthlyOperationalData): MonthKey => {
+  const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+  return `${monthNames[operationalData.month - 1] || "Janeiro"}/${operationalData.year}`;
+};
+
 export const getDefaultMonthlyDashboard = buildMonthlyDocument;
 
 export const getMonthKey = (month?: string | null) => month || DEFAULT_MONTH;
+export const getPeriodLabel = (month?: string | null) =>
+  month === "Todos" ? "Todos os meses" : getMonthKey(month);
 export const getCurrentMonthKey = () => {
-  const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+  const monthNames = [
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+  ];
   const now = new Date();
   return `${monthNames[now.getMonth()]}/${now.getFullYear()}`;
 };
-const localMonthKey = (month: MonthKey) => `uniodonto_monthly_dashboard_${month}`;
-const readLocalMonthlyDashboard = (month: MonthKey): MonthlyDashboardDocument | null => {
+const localMonthKey = (month: MonthKey) =>
+  `uniodonto_monthly_dashboard_${month}`;
+
+export const loadLocalMonthlyDashboard = (
+  month: MonthKey,
+): MonthlyDashboardDocument | null => {
+  if (typeof localStorage === "undefined") return null;
   try {
     const raw = localStorage.getItem(localMonthKey(month));
-    return raw ? normalizeDocument(month, JSON.parse(raw)) : null;
+    return raw ? (JSON.parse(raw) as MonthlyDashboardDocument) : null;
   } catch {
     return null;
   }
 };
 
-export const loadMonthlyDashboard = async (month: MonthKey): Promise<MonthlyDashboardDocument> => {
+export const OFFICIAL_DATA_VERSION = "investment-mensal-20260810";
+
+/**
+ * Remove caches criados antes da planilha de investimentos se tornar a fonte
+ * oficial. Mantém autenticação, preferências e demais dados do navegador.
+ */
+export const clearLegacyMonthlyDashboardCache = () => {
+  if (typeof localStorage === "undefined") return;
+  const versionKey = "uniodonto_monthly_dashboard_version";
+  if (localStorage.getItem(versionKey) === OFFICIAL_DATA_VERSION) return;
+
+  const legacyKeys = Array.from({ length: localStorage.length }, (_, index) =>
+    localStorage.key(index),
+  ).filter((key): key is string =>
+    Boolean(key?.startsWith("uniodonto_monthly_dashboard_")),
+  );
+  legacyKeys.forEach((key) => localStorage.removeItem(key));
+
+  localStorage.setItem(versionKey, OFFICIAL_DATA_VERSION);
+};
+export const loadMonthlyDashboard = async (
+  month: MonthKey,
+): Promise<MonthlyDashboardDocument> => {
   const snap = await getDoc(monthDocRef(month));
   if (!snap.exists()) {
-    throw new Error(`Dados do mês "${month}" ainda não foram sincronizados no Firestore.`);
+    throw new Error(
+      `Dados do mês "${month}" ainda não foram sincronizados no Firestore.`,
+    );
   }
 
   return normalizeInvestmentSummary(normalizeDocument(month, snap.data()));
@@ -290,11 +731,12 @@ export const loadMonthlyDashboard = async (month: MonthKey): Promise<MonthlyDash
 export const saveMonthlyDashboard = async (
   month: MonthKey,
   data: MonthlyDashboardDocument,
-  user?: AppUserProfile | null
+  user?: AppUserProfile | null,
 ) => {
   const payload = {
     ...data,
     month,
+    dataVersion: OFFICIAL_DATA_VERSION,
     updatedAt: new Date().toISOString(),
     updatedBy: user ?? null,
   };
@@ -303,36 +745,44 @@ export const saveMonthlyDashboard = async (
   localStorage.setItem(localMonthKey(month), JSON.stringify(normalizedPayload));
 
   try {
-    await setDoc(monthDocRef(month), {
-      ...normalizedPayload,
-      month,
-      updatedAt: serverTimestamp(),
-      updatedBy: user ?? null,
-    }, { merge: true });
+    await setDoc(
+      monthDocRef(month),
+      {
+        ...normalizedPayload,
+        month,
+        updatedAt: serverTimestamp(),
+        updatedBy: user ?? null,
+      },
+      { merge: true },
+    );
     return { localSaved: true, remoteSaved: true };
   } catch (error) {
     // The local copy remains available, but callers must know that the
     // production database did not accept the write.
-    console.error("[dashboard] Falha ao sincronizar o mês com o Firestore", error);
+    console.error(
+      "[dashboard] Falha ao sincronizar o mês com o Firestore",
+      error,
+    );
     return {
       localSaved: true,
       remoteSaved: false,
-      error: error instanceof Error ? error : new Error("Falha ao salvar os dados do mês no Firestore."),
+      error:
+        error instanceof Error
+          ? error
+          : new Error("Falha ao salvar os dados do mês no Firestore."),
     };
   }
 };
 
 export const subscribeMonthlyDashboard = (
   month: MonthKey,
-  handler: MonthlyDashboardSnapshotHandler
+  handler: MonthlyDashboardSnapshotHandler,
 ) => {
-  const localData = readLocalMonthlyDashboard(month);
-
   // A local UI session without Firebase Auth cannot read Firestore. Avoid
-  // opening a listener that will only generate permission errors; the local
-  // copy remains available until the user authenticates.
+  // opening a listener that will only generate permission errors. The
+  // deterministic spreadsheet baseline remains available for editing.
   if (!auth.currentUser) {
-    handler(localData, new Error("Usuário não autenticado no Firebase."));
+    handler(null, new Error("Usuário não autenticado no Firebase."));
     return () => undefined;
   }
 
@@ -340,7 +790,12 @@ export const subscribeMonthlyDashboard = (
     monthDocRef(month),
     (snap) => {
       if (!snap.exists()) {
-        handler(null, new Error(`Dados do mês "${month}" ainda não foram sincronizados no Firestore.`));
+        handler(
+          null,
+          new Error(
+            `Dados do mês "${month}" ainda não foram sincronizados no Firestore.`,
+          ),
+        );
         return;
       }
 
@@ -351,23 +806,31 @@ export const subscribeMonthlyDashboard = (
     },
     (error) => {
       handler(
-        readLocalMonthlyDashboard(month),
-        error instanceof Error ? error : new Error("Falha ao ler o dashboard mensal no Firestore.")
+        null,
+        error instanceof Error
+          ? error
+          : new Error("Falha ao ler o dashboard mensal no Firestore."),
       );
-    }
+    },
   );
-
-  if (localData) handler(localData);
 
   return () => {
     unsubscribeRemote();
   };
 };
 
-export const buildSummaryFromRecord = (record: MonthlyDashboardDocument): SummaryData => record.summary;
-export const buildBeneficiariesFromRecord = (record: MonthlyDashboardDocument): BeneficiariesData => record.beneficiariesData;
-export const buildFunnelFromRecord = (record: MonthlyDashboardDocument): FunnelDataPoint[] => record.funnelData;
-export const buildNpsFromRecord = (record: MonthlyDashboardDocument): NpsDataPoint[] => record.npsData;
+export const buildSummaryFromRecord = (
+  record: MonthlyDashboardDocument,
+): SummaryData => record.summary;
+export const buildBeneficiariesFromRecord = (
+  record: MonthlyDashboardDocument,
+): BeneficiariesData => record.beneficiariesData;
+export const buildFunnelFromRecord = (
+  record: MonthlyDashboardDocument,
+): FunnelDataPoint[] => record.funnelData;
+export const buildNpsFromRecord = (
+  record: MonthlyDashboardDocument,
+): NpsDataPoint[] => record.npsData;
 
 export const buildRecordFromEnvioState = (payload: {
   summary: SummaryData;
@@ -376,17 +839,28 @@ export const buildRecordFromEnvioState = (payload: {
   npsData?: NpsDataPoint[];
   investments: InvestmentItem[];
   metrics: MetricItem[];
+  metaAdsCampaigns?: MetaAdsCampaign[];
+  operationalData?: MonthlyOperationalData;
   cancellationReasons?: MonthlyDashboardDocument["cancellationReasons"];
   month: MonthKey;
-}): MonthlyDashboardDocument => normalizeInvestmentSummary({
-  month: payload.month,
-  summary: payload.summary,
-  beneficiariesData: payload.beneficiariesData ?? buildMonthlyDocument(payload.month).beneficiariesData,
-  funnelData: payload.funnelData ?? buildMonthlyDocument(payload.month).funnelData,
-  npsData: payload.npsData ?? buildMonthlyDocument(payload.month).npsData,
-  investments: payload.investments,
-  metrics: payload.metrics,
-  cancellationReasons: payload.cancellationReasons ?? buildMonthlyDocument(payload.month).cancellationReasons,
-});
+}): MonthlyDashboardDocument =>
+  normalizeInvestmentSummary({
+    month: payload.month,
+    dataVersion: OFFICIAL_DATA_VERSION,
+    summary: payload.summary,
+    beneficiariesData:
+      payload.beneficiariesData ??
+      buildMonthlyDocument(payload.month).beneficiariesData,
+    funnelData:
+      payload.funnelData ?? buildMonthlyDocument(payload.month).funnelData,
+    npsData: payload.npsData ?? buildMonthlyDocument(payload.month).npsData,
+    investments: payload.investments,
+    metrics: payload.metrics,
+    metaAdsCampaigns: payload.metaAdsCampaigns || [],
+    operationalData: payload.operationalData,
+    cancellationReasons:
+      payload.cancellationReasons ??
+      buildMonthlyDocument(payload.month).cancellationReasons,
+  });
 
 export const defaultMonthlyDashboard = buildMonthlyDocument(DEFAULT_MONTH);

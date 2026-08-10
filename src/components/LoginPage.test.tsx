@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../lib/firebase", () => ({
+  LGPD_CONSENT_VERSION: "2026-08-10-v2",
+  recordConsentDecision: vi.fn(),
   signInOrCreateWithPassword: mocks.signInMock,
   toLoginEmail: (value: string) => (value.includes("@") ? value : `${value}@uniodonto.com`),
 }));

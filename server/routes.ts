@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
-import { FieldValue, getFirestore as getAdminFirestore } from "firebase-admin/firestore";
+import {
+  FieldValue,
+  getFirestore as getAdminFirestore,
+} from "firebase-admin/firestore";
 import { google } from "googleapis";
 import type {
   BeneficiariesData,
@@ -15,8 +18,10 @@ import type {
 export const apiRouter = Router();
 
 const DEFAULT_MONTH = "Maio/2026";
-const MONTHLY_SHEET_NAME = process.env.GOOGLE_MONTHLY_SHEET_NAME || "monthly_dashboard";
-const SHEET_CACHE_TTL_MS = Number(process.env.GOOGLE_SHEET_CACHE_TTL || "60") * 1000;
+const MONTHLY_SHEET_NAME =
+  process.env.GOOGLE_MONTHLY_SHEET_NAME || "monthly_dashboard";
+const SHEET_CACHE_TTL_MS =
+  Number(process.env.GOOGLE_SHEET_CACHE_TTL || "60") * 1000;
 const SCOPE = ["https://www.googleapis.com/auth/spreadsheets.readonly"];
 
 type RawSheetRow = Record<string, string>;
@@ -74,7 +79,8 @@ const getAdminDb = () => {
 
 const monthDocId = (month: string) => month.replace(/\//g, "-");
 
-const normalizeMonth = (value?: string | null) => (value?.trim() || DEFAULT_MONTH);
+const normalizeMonth = (value?: string | null) =>
+  value?.trim() || DEFAULT_MONTH;
 
 const normalizeHeader = (value: string) =>
   value
@@ -118,14 +124,21 @@ const loadMonthlyRows = async (): Promise<RawSheetRow[]> => {
 
   const values = response.data.values || [];
   if (values.length === 0) {
-    throw new Error(`Worksheet "${MONTHLY_SHEET_NAME}" is empty or unavailable.`);
+    throw new Error(
+      `Worksheet "${MONTHLY_SHEET_NAME}" is empty or unavailable.`,
+    );
   }
 
   const [headerRow, ...dataRows] = values;
   const headers = headerRow.map((header) => String(header || ""));
   const rows = dataRows
     .filter((row) => row.some((cell) => String(cell || "").trim() !== ""))
-    .map((row) => rowToObject(headers, row.map((cell) => String(cell || ""))));
+    .map((row) =>
+      rowToObject(
+        headers,
+        row.map((cell) => String(cell || "")),
+      ),
+    );
 
   sheetCache.set(MONTHLY_SHEET_NAME, {
     value: rows,
@@ -144,14 +157,21 @@ const findMonthlyRow = async (month?: string | null) => {
   });
 
   if (!row) {
-    throw new Error(`No row found for month "${normalizedMonth}" in worksheet "${MONTHLY_SHEET_NAME}".`);
+    throw new Error(
+      `No row found for month "${normalizedMonth}" in worksheet "${MONTHLY_SHEET_NAME}".`,
+    );
   }
 
   return row;
 };
 
-const resolveMonthlyDocument = (row: RawSheetRow, month?: string | null): MonthlyDashboardDocument => {
-  const normalizedMonth = normalizeMonth(month || row.month || row.mes || row.month_key);
+const resolveMonthlyDocument = (
+  row: RawSheetRow,
+  month?: string | null,
+): MonthlyDashboardDocument => {
+  const normalizedMonth = normalizeMonth(
+    month || row.month || row.mes || row.month_key,
+  );
 
   const summary = parseJsonCell<SummaryData>(
     row.summary_json || row.summary || row.summary_data,
@@ -166,35 +186,45 @@ const resolveMonthlyDocument = (row: RawSheetRow, month?: string | null): Monthl
       sales: { current: 0, previous: 0, variation: 0, target: 0 },
       cac: { current: 0, previous: 0, variation: 0, target: 0 },
       nps: { current: 0, previous: 0, variation: 0, target: 0 },
-    }
+    },
   );
 
   const beneficiariesData = parseJsonCell<BeneficiariesData>(
     row.beneficiaries_json || row.beneficiaries || row.beneficiaries_data,
-    { evolution: [], distribution: [] }
+    { evolution: [], distribution: [] },
   );
 
   const funnelData = parseJsonCell<FunnelDataPoint[]>(
     row.funnel_json || row.funnel || row.funnel_data,
-    []
+    [],
   );
 
   const npsData = parseJsonCell<NpsDataPoint[]>(
     row.nps_json || row.nps || row.nps_data,
-    []
+    [],
   );
 
   const investments = parseJsonCell<InvestmentItem[]>(
     row.investments_json || row.investments || row.investments_data,
-    []
+    [],
   );
 
   const metrics = parseJsonCell<MetricItem[]>(
     row.metrics_json || row.metrics || row.metrics_data,
-    []
+    [],
   );
 
-  const updatedBy = row.updated_by_email || row.updated_by || row.updatedby || "";
+  const cancellationReasons = parseJsonCell<
+    MonthlyDashboardDocument["cancellationReasons"]
+  >(
+    row.cancellation_reasons_json ||
+      row.cancellation_reasons ||
+      row.cancellationReasons,
+    [],
+  );
+
+  const updatedBy =
+    row.updated_by_email || row.updated_by || row.updatedby || "";
 
   return {
     month: normalizedMonth,
@@ -204,13 +234,15 @@ const resolveMonthlyDocument = (row: RawSheetRow, month?: string | null): Monthl
     npsData,
     investments,
     metrics,
+    cancellationReasons,
     updatedAt: row.updated_at || row.updatedat || undefined,
     updatedBy: updatedBy
       ? ({
           uid: row.updated_by_uid || updatedBy,
           email: updatedBy,
           name: row.updated_by_name || updatedBy,
-          role: (row.updated_by_role as AppUserProfileLike["role"]) || "Operador",
+          role:
+            (row.updated_by_role as AppUserProfileLike["role"]) || "Operador",
           photoUrl: row.updated_by_photo_url || undefined,
           phone: row.updated_by_phone || undefined,
           updatedAt: row.updated_at || undefined,
@@ -219,7 +251,9 @@ const resolveMonthlyDocument = (row: RawSheetRow, month?: string | null): Monthl
   };
 };
 
-const syncMonthlyDocumentToFirestore = async (record: MonthlyDashboardDocument) => {
+const syncMonthlyDocumentToFirestore = async (
+  record: MonthlyDashboardDocument,
+) => {
   const firestore = getAdminDb();
   await firestore
     .doc(`organizations/uniodonto/months/${monthDocId(record.month)}`)
@@ -228,7 +262,7 @@ const syncMonthlyDocumentToFirestore = async (record: MonthlyDashboardDocument) 
         ...record,
         updatedAt: FieldValue.serverTimestamp(),
       },
-      { merge: true }
+      { merge: true },
     );
 };
 
@@ -239,7 +273,9 @@ const getMonthlyDocument = async (month?: string | null) => {
 
 apiRouter.get("/dashboard/summary", async (req, res) => {
   try {
-    const record = await getMonthlyDocument(req.query.month as string | undefined);
+    const record = await getMonthlyDocument(
+      req.query.month as string | undefined,
+    );
     return res.json(record.summary);
   } catch (error) {
     return res.status(500).json({
@@ -251,7 +287,9 @@ apiRouter.get("/dashboard/summary", async (req, res) => {
 
 apiRouter.get("/beneficiaries", async (req, res) => {
   try {
-    const record = await getMonthlyDocument(req.query.month as string | undefined);
+    const record = await getMonthlyDocument(
+      req.query.month as string | undefined,
+    );
     return res.json(record.beneficiariesData);
   } catch (error) {
     return res.status(500).json({
@@ -263,7 +301,9 @@ apiRouter.get("/beneficiaries", async (req, res) => {
 
 apiRouter.get("/funnel", async (req, res) => {
   try {
-    const record = await getMonthlyDocument(req.query.month as string | undefined);
+    const record = await getMonthlyDocument(
+      req.query.month as string | undefined,
+    );
     return res.json(record.funnelData);
   } catch (error) {
     return res.status(500).json({
@@ -275,7 +315,9 @@ apiRouter.get("/funnel", async (req, res) => {
 
 apiRouter.get("/marketing", async (req, res) => {
   try {
-    const record = await getMonthlyDocument(req.query.month as string | undefined);
+    const record = await getMonthlyDocument(
+      req.query.month as string | undefined,
+    );
     return res.json({ investments: record.investments });
   } catch (error) {
     return res.status(500).json({
@@ -287,12 +329,14 @@ apiRouter.get("/marketing", async (req, res) => {
 
 apiRouter.get("/cities", async (req, res) => {
   try {
-    const record = await getMonthlyDocument(req.query.month as string | undefined);
+    const record = await getMonthlyDocument(
+      req.query.month as string | undefined,
+    );
     return res.json(
       record.beneficiariesData.distribution.map((item) => ({
         city: item.plan,
         beneficiaries: item.count,
-      }))
+      })),
     );
   } catch (error) {
     return res.status(500).json({
@@ -304,7 +348,9 @@ apiRouter.get("/cities", async (req, res) => {
 
 apiRouter.get("/nps", async (req, res) => {
   try {
-    const record = await getMonthlyDocument(req.query.month as string | undefined);
+    const record = await getMonthlyDocument(
+      req.query.month as string | undefined,
+    );
     return res.json(record.npsData);
   } catch (error) {
     return res.status(500).json({

@@ -13,16 +13,22 @@ service firebase.storage {
           || request.auth.token.email == "fertaisetech@gmail.com");
     }
 
+    function isPortalAdmin() {
+      return isSignedIn() && request.auth.token.email == "fertaisetech@gmail.com";
+    }
+
     match /profile-photos/{uid}/{allPaths=**} {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
     match /team-member-photos/{allPaths=**} {
-      allow read, write: if isUniodontoUser();
+      allow read: if isUniodontoUser();
+      allow write: if isPortalAdmin();
     }
 
     match /organizations/uniodonto/{allPaths=**} {
-      allow read, write: if isUniodontoUser();
+      allow read: if isUniodontoUser();
+      allow write: if isPortalAdmin();
     }
   }
 }

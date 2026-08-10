@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { 
   User, 
   Users, 
@@ -29,8 +29,10 @@ import { useAppSession } from "../context/AppSessionContext";
 import {
   deleteTeamMember,
   loadTeamMembers,
+  loadRoleScreens,
   observeTeamMembers,
   saveTeamMember,
+  saveRoleScreens,
   saveUserProfile,
   uploadTeamMemberPhoto,
   uploadUserProfilePhoto,
@@ -48,6 +50,15 @@ export interface Member {
   isPhoto?: boolean;
   photoUrl?: string;
   localPhotoUrl?: string;
+  screens?: {
+    dashboard?: boolean;
+    relatorios?: boolean;
+    envio?: boolean;
+    configuracoes?: boolean;
+    comunicacoes?: boolean;
+    appVendas?: boolean;
+    crm?: boolean;
+  };
 }
 
 const defaultMembers: Member[] = [
@@ -111,8 +122,27 @@ export function Configuracoes() {
   const { profile } = useAppSession();
   const canManageUsers = profile?.email?.toLowerCase() === "fertaisetech@gmail.com";
   const [activeTab, setActiveTab] = useState<
-    "perfil" | "usuarios" | "cooperativa" | "seguranca" | "alertas"
+    "perfil" | "usuarios" | "telas" | "cooperativa" | "seguranca" | "alertas"
   >("usuarios");
+  const screenOptions = [
+    ["visaoGeral", "Visão Geral"], ["dashboard", "Dashboard"], ["relatorios", "Relatórios"], ["envio", "Envio e Integração"],
+    ["configuracoes", "Configurações"], ["comunicacoes", "Comunicações"], ["appVendas", "App de Vendas"], ["crm", "CRM"],
+  ] as const;
+  const [roleScreens, setRoleScreens] = useState<Record<string, Record<string, boolean>>>(() => {
+    try { return JSON.parse(localStorage.getItem("uniodonto-role-screens") || "{}"); } catch { return {}; }
+  });
+  const [roleScreensDirty, setRoleScreensDirty] = useState(false);
+  const [roleScreensSaved, setRoleScreensSaved] = useState(false);
+  const roles = ["Diretor", "Gerente", "Recepção", "Vendedoras", "Tech FerTaise"];
+
+  useEffect(() => {
+    if (!canManageUsers) return;
+    void loadRoleScreens().then((remote) => {
+      if (!remote || Object.keys(remote).length === 0) return;
+      setRoleScreens(remote);
+      localStorage.setItem("uniodonto-role-screens", JSON.stringify(remote));
+    });
+  }, [canManageUsers]);
 
   // State for Users Management
   const [searchQuery, setSearchQuery] = useState("");
@@ -134,7 +164,10 @@ export function Configuracoes() {
     dashboard: true,
     relatorios: true,
     envio: true,
-    configuracoes: true
+    configuracoes: true,
+    comunicacoes: true,
+    appVendas: true,
+    crm: true,
   });
 
   // Pagination & Sorting States
@@ -282,7 +315,10 @@ export function Configuracoes() {
       dashboard: true,
       relatorios: true,
       envio: true,
-      configuracoes: true
+      configuracoes: true,
+      comunicacoes: true,
+      appVendas: true,
+      crm: true,
     });
     setIsModalOpen(true);
   };
@@ -310,10 +346,13 @@ export function Configuracoes() {
     setFormStatus(member.status);
     setFormPhoto(member.localPhotoUrl || (member.isPhoto && member.photoUrl ? member.photoUrl : null));
     setFormScreens({
-      dashboard: true,
-      relatorios: true,
-      envio: member.role !== "Diretor",
-      configuracoes: member.role === "Tech FerTaise" || member.role === "Diretor"
+      dashboard: member.screens?.dashboard ?? true,
+      relatorios: member.screens?.relatorios ?? true,
+      envio: member.screens?.envio ?? member.role !== "Diretor",
+      configuracoes: member.screens?.configuracoes ?? (member.role === "Tech FerTaise" || member.role === "Diretor"),
+      comunicacoes: member.screens?.comunicacoes ?? true,
+      appVendas: member.screens?.appVendas ?? true,
+      crm: member.screens?.crm ?? true,
     });
     setIsModalOpen(true);
   };
@@ -339,7 +378,7 @@ export function Configuracoes() {
       showToast("Somente Fertize Tech pode salvar usuários.", "error");
       return;
     }
-    if (!formName.trim() || !formEmail.trim()) {
+    if (!formName.trim() || !formUsername.trim()) {
       showToast("Erro ao salvar, tente novamente", "error");
       return;
     }
@@ -359,7 +398,7 @@ export function Configuracoes() {
         const nextMember: Member = {
           id: memberId,
           name: formName,
-          email: formEmail,
+          email: formEmail || formUsername,
           role: formRole,
           status: formStatus,
           initials,
@@ -367,6 +406,7 @@ export function Configuracoes() {
           isPhoto: !!photoUrl,
           photoUrl,
           localPhotoUrl: formPhoto?.startsWith("data:") ? formPhoto : editingMember?.localPhotoUrl,
+          screens: formScreens,
         };
 
         await saveTeamMember(nextMember);
@@ -420,6 +460,14 @@ export function Configuracoes() {
               <Users className="w-4 h-4 shrink-0" />
               <span>Gerenciamento de Usuários</span>
             </button>
+
+            {canManageUsers && <button
+              onClick={() => setActiveTab("telas")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all ${activeTab === "telas" ? "bg-[#A60069] text-white shadow-sm font-semibold" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"}`}
+            >
+              <Briefcase className="w-4 h-4 shrink-0" />
+              <span>Gerenciamento de Telas</span>
+            </button>}
 
             <button
               onClick={() => setActiveTab("cooperativa")}
@@ -478,6 +526,28 @@ export function Configuracoes() {
               setSortField={setSortField}
               setSortDirection={setSortDirection}
             />
+          )}
+
+          {activeTab === "telas" && canManageUsers && (
+            <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+              <div className="mb-5 border-b border-slate-100 pb-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-[#CD176D]">Controle de acesso</p>
+                <h2 className="mt-1 text-lg font-black text-slate-900">Gerenciamento de Telas</h2>
+                <p className="mt-1 text-xs text-slate-500">Escolha quais telas cada cargo ou função pode visualizar no portal.</p>
+              </div>
+              <div className="space-y-3">
+                {roles.map((role) => {
+                  const permissions = roleScreens[role] || Object.fromEntries(screenOptions.map(([key]) => [key, true]));
+                  return <div key={role} className="rounded-xl border border-slate-200 p-3">
+                    <div className="mb-2 flex items-center justify-between"><h3 className="text-xs font-black text-slate-800">{role}</h3><span className="text-[10px] font-bold text-slate-400">{Object.values(permissions).filter(Boolean).length} telas liberadas</span></div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {screenOptions.map(([key, label]) => <label key={key} className="flex cursor-pointer items-center gap-2 rounded-lg bg-slate-50 px-2 py-2 text-[10px] font-bold text-slate-700"><input type="checkbox" checked={permissions[key] ?? true} onChange={(event) => { const next = { ...roleScreens, [role]: { ...permissions, [key]: event.target.checked } }; setRoleScreens(next); setRoleScreensDirty(true); setRoleScreensSaved(false); }} className="accent-[#CD176D]" />{label}</label>)}
+                    </div>
+                  </div>;
+                })}
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4"><p className={`text-[10px] font-bold ${roleScreensDirty ? "text-amber-600" : roleScreensSaved ? "text-emerald-600" : "text-slate-400"}`}>{roleScreensDirty ? "Há alterações não salvas." : roleScreensSaved ? "Alterações salvas com sucesso." : "Nenhuma alteração pendente."}</p><button type="button" disabled={!roleScreensDirty} onClick={async () => { localStorage.setItem("uniodonto-role-screens", JSON.stringify(roleScreens)); try { await saveRoleScreens(roleScreens); setRoleScreensDirty(false); setRoleScreensSaved(true); showToast("Permissões salvas no banco de dados.", "success"); } catch { showToast("Permissões salvas localmente; banco indisponível.", "error"); } }} className="rounded-xl bg-[#CD176D] px-4 py-2 text-xs font-black text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-40">Salvar alterações</button></div>
+            </section>
           )}
 
           {/* Active Tab: Gerenciamento de Usuários (legacy block disabled during split) */}
@@ -1370,17 +1440,33 @@ export function Configuracoes() {
       {/* Interactive Modal for Adding / Editing Users with gorgeous matching inputs */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-[32px] border border-slate-100 shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto flex flex-col scale-100 animate-[fadeIn_0.2s_ease-out] scrollbar-thin select-none">
+          <div className="bg-white rounded-[32px] border border-slate-100 shadow-2xl w-full max-w-md max-h-[calc(100vh-1rem)] overflow-y-auto flex flex-col scale-100 animate-[fadeIn_0.2s_ease-out] scrollbar-thin select-none">
             
             {/* Modal Header */}
-            <div className="px-6 pt-6 pb-4 flex items-center justify-between sticky top-0 bg-white z-10 border-b border-slate-50">
+            <div className="px-5 pt-4 pb-3 flex items-center justify-between sticky top-0 bg-white z-10 border-b border-slate-50">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-pink-50 flex items-center justify-center text-[#CD176D]">
-                  <User className="w-5 h-5 stroke-[2.5]" />
+                <div className="relative shrink-0">
+                  {formPhoto ? (
+                    <img src={formPhoto} alt="Avatar" className="w-14 h-14 rounded-full object-cover border-2 border-white shadow-sm" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-14 h-14 rounded-full bg-[#A60069] text-white flex items-center justify-center font-black text-base border-2 border-white shadow-sm">
+                      {formName ? getInitials(formName) : "UN"}
+                    </div>
+                  )}
+                  <label className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[#CD176D] border-2 border-white flex items-center justify-center text-white cursor-pointer shadow-sm">
+                    <Pencil className="w-3 h-3" />
+                    <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setFormPhotoFile(file);
+                        const reader = new FileReader();
+                        reader.onloadend = () => setFormPhoto(reader.result as string);
+                        reader.readAsDataURL(file);
+                      }
+                    }} />
+                  </label>
                 </div>
-                <h2 className="text-lg font-black text-[#0F172A] tracking-tight">
-                  {editingMember ? "Editar Usuário" : "Convidar Novo Usuário"}
-                </h2>
+                <div><h2 className="text-lg font-black text-[#0F172A] tracking-tight">{editingMember ? "Editar Usuário" : "Convidar Novo Usuário"}</h2><button type="button" onClick={() => { setFormPhoto(null); setFormPhotoFile(null); }} className="mt-0.5 text-[9px] font-black tracking-wider text-[#CD176D]">REMOVER FOTO</button></div>
               </div>
               <button
                 type="button"
@@ -1391,59 +1477,8 @@ export function Configuracoes() {
               </button>
             </div>
 
-            {/* Photo section */}
-            <div className="flex flex-col items-center py-4 shrink-0 bg-slate-50/40 border-b border-slate-100 mb-4">
-              <div className="relative group">
-                {formPhoto ? (
-                  <img
-                    src={formPhoto}
-                    alt="Avatar"
-                    className="w-24 h-24 rounded-full object-cover border-4 border-white shadow-md"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <div className="w-24 h-24 rounded-full bg-[#A60069] text-white flex items-center justify-center font-black text-2xl border-4 border-white shadow-md">
-                    {formName ? getInitials(formName) : "UN"}
-                  </div>
-                )}
-                <label className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-[#CD176D] hover:bg-[#A60069] border-2 border-white flex items-center justify-center text-white cursor-pointer shadow-md transition-all active:scale-90">
-                  <Camera className="w-4 h-4" />
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        setFormPhotoFile(file);
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                          setFormPhoto(reader.result as string);
-                        };
-                        reader.readAsDataURL(file);
-                      } else {
-                        setFormPhotoFile(null);
-                        setFormPhoto(null);
-                      }
-                    }}
-                  />
-                </label>
-              </div>
-              <span className="text-[9px] font-black tracking-widest text-[#64748B] mt-2 uppercase">FOTO DE PERFIL</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setFormPhoto(null);
-                  setFormPhotoFile(null);
-                }}
-                className="text-[10px] font-black text-[#CD176D] hover:text-[#A60069] mt-1 transition-colors uppercase tracking-wider cursor-pointer"
-              >
-                REMOVER FOTO
-              </button>
-            </div>
-
             {/* Modal Body / Form */}
-            <form onSubmit={handleSaveMember} className="px-6 pb-6 space-y-4">
+            <form onSubmit={handleSaveMember} className="px-5 pb-4 space-y-3 flex flex-col">
               {/* 1. NOME COMPLETO */}
               <div>
                 <label className="block text-[10px] font-extrabold text-[#64748B] uppercase tracking-wider mb-1.5">
@@ -1459,23 +1494,8 @@ export function Configuracoes() {
                 />
               </div>
 
-              {/* 2. E-MAIL CORPORATIVO */}
-              <div>
-                <label className="block text-[10px] font-extrabold text-[#64748B] uppercase tracking-wider mb-1.5">
-                  E-mail Corporativo
-                </label>
-                <input
-                  type="email"
-                  className="w-full px-4 py-3 text-xs font-semibold text-slate-800 border border-slate-200 focus:border-[#CD176D] focus:ring-2 focus:ring-[#CD176D]/10 rounded-2xl outline-none transition-all placeholder:text-slate-400"
-                  placeholder="Ex: drelcio@uniodonto.com"
-                  value={formEmail}
-                  onChange={(e) => setFormEmail(e.target.value)}
-                  required
-                />
-              </div>
-
-              {/* 3. CARGO / FUNÇÃO (TOP SELECTOR) */}
-              <div>
+              {/* 2. CARGO / FUNÇÃO */}
+              <div className="order-5">
                 <label className="block text-[10px] font-extrabold text-[#64748B] uppercase tracking-wider mb-1.5">
                   Cargo / Função
                 </label>
@@ -1483,6 +1503,8 @@ export function Configuracoes() {
                   <select
                     className="w-full px-4 py-3 text-xs font-extrabold text-slate-800 border border-slate-200 focus:border-[#CD176D] focus:ring-2 focus:ring-[#CD176D]/10 rounded-2xl outline-none transition-all bg-white appearance-none cursor-pointer pr-10"
                     value={formRole}
+                    disabled={!canManageUsers}
+                    title={canManageUsers ? "Somente Fertize Tech pode alterar a função" : "Apenas Fertize Tech pode alterar funções"}
                     onChange={(e) => {
                       const newRole = e.target.value;
                       setFormRole(newRole);
@@ -1491,14 +1513,17 @@ export function Configuracoes() {
                         dashboard: true,
                         relatorios: true,
                         envio: newRole !== "Diretor",
-                        configuracoes: newRole === "Tech FerTaise" || newRole === "Diretor"
+                        configuracoes: newRole === "Tech FerTaise" || newRole === "Diretor",
+                        comunicacoes: true,
+                        appVendas: true,
+                        crm: true,
                       });
                     }}
                   >
                     <option value="Diretor">Diretor</option>
                     <option value="Gerente">Gerente</option>
-                    <option value="Financeiro">Financeiro</option>
-                    <option value="Auditor">Auditor</option>
+                    <option value="Recepção">Recepção</option>
+                    <option value="Vendedoras">Vendedoras</option>
                     <option value="Tech FerTaise">Tech FerTaise</option>
                   </select>
                   <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-400">
@@ -1587,7 +1612,7 @@ export function Configuracoes() {
               </div>
 
               {/* 7. TELAS DISPONÍVEIS */}
-              <div>
+              <div className="order-6">
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-[10px] font-extrabold text-[#64748B] uppercase tracking-wider">
                     Telas Disponíveis
@@ -1603,7 +1628,7 @@ export function Configuracoes() {
                   {/* Dashboard Option */}
                   <div
                     onClick={() => setFormScreens({ ...formScreens, dashboard: !formScreens.dashboard })}
-                    className={`border rounded-2xl p-3 flex flex-col justify-between cursor-pointer transition-all h-20 relative select-none ${
+                      className={`border rounded-xl p-2 flex flex-col justify-between cursor-pointer transition-all h-12 relative select-none ${
                       formScreens.dashboard 
                         ? "bg-[#FDF2F8]/40 border-[#CD176D]" 
                         : "bg-[#F8FAFC]/50 border-slate-100 hover:border-slate-200"
@@ -1624,7 +1649,7 @@ export function Configuracoes() {
                   {/* Relatórios Option */}
                   <div
                     onClick={() => setFormScreens({ ...formScreens, relatorios: !formScreens.relatorios })}
-                    className={`border rounded-2xl p-3 flex flex-col justify-between cursor-pointer transition-all h-20 relative select-none ${
+                      className={`border rounded-xl p-2 flex flex-col justify-between cursor-pointer transition-all h-12 relative select-none ${
                       formScreens.relatorios 
                         ? "bg-[#FDF2F8]/40 border-[#CD176D]" 
                         : "bg-[#F8FAFC]/50 border-slate-100 hover:border-slate-200"
@@ -1648,7 +1673,7 @@ export function Configuracoes() {
                       if (formRole === "Diretor") return;
                       setFormScreens({ ...formScreens, envio: !formScreens.envio });
                     }}
-                    className={`border rounded-2xl p-3 flex flex-col justify-between transition-all h-20 relative select-none ${
+                      className={`border rounded-xl p-2 flex flex-col justify-between transition-all h-12 relative select-none ${
                       formRole === "Diretor"
                         ? "bg-[#F8FAFC]/30 border-slate-100 opacity-65 cursor-not-allowed"
                         : formScreens.envio 
@@ -1679,7 +1704,7 @@ export function Configuracoes() {
                   {/* Configurações Option */}
                   <div
                     onClick={() => setFormScreens({ ...formScreens, configuracoes: !formScreens.configuracoes })}
-                    className={`border rounded-2xl p-3 flex flex-col justify-between cursor-pointer transition-all h-20 relative select-none ${
+                      className={`border rounded-xl p-2 flex flex-col justify-between cursor-pointer transition-all h-12 relative select-none ${
                       formScreens.configuracoes 
                         ? "bg-[#FDF2F8]/40 border-[#CD176D]" 
                         : "bg-[#F8FAFC]/50 border-slate-100 hover:border-slate-200"
@@ -1696,43 +1721,29 @@ export function Configuracoes() {
                     </div>
                     <span className="text-[9px] text-[#64748B] font-semibold">Perfil e ajustes</span>
                   </div>
-                </div>
-              </div>
 
-              {/* 8. CARGO / FUNÇÃO (DUPLICATED SELECTOR AS REPLICATED IN USER SCREENSHOT) */}
-              <div className="pt-2">
-                <label className="block text-[10px] font-extrabold text-[#64748B] uppercase tracking-wider mb-1.5">
-                  Cargo / Função
-                </label>
-                <div className="relative">
-                  <select
-                    className="w-full px-4 py-3 text-xs font-semibold text-slate-800 border border-slate-200 focus:border-[#CD176D] focus:ring-2 focus:ring-[#CD176D]/10 rounded-2xl outline-none transition-all bg-white appearance-none cursor-pointer pr-10"
-                    value={formRole}
-                    onChange={(e) => {
-                      const newRole = e.target.value;
-                      setFormRole(newRole);
-                      setFormScreens({
-                        dashboard: true,
-                        relatorios: true,
-                        envio: newRole !== "Diretor",
-                        configuracoes: newRole === "Tech FerTaise" || newRole === "Diretor"
-                      });
-                    }}
-                  >
-                    <option value="Diretor">Diretor</option>
-                    <option value="Gerente">Gerente</option>
-                    <option value="Financeiro">Financeiro</option>
-                    <option value="Auditor">Auditor</option>
-                    <option value="Tech FerTaise">Tech FerTaise</option>
-                  </select>
-                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-400">
-                    <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
-                  </div>
+                  {([
+                    ["comunicacoes", "Comunicações", "Mensagens e avisos"],
+                    ["appVendas", "App de Vendas", "Oportunidades comerciais"],
+                    ["crm", "CRM", "Contatos e relacionamento"],
+                  ] as const).map(([key, label, description]) => (
+                    <div
+                      key={key}
+                      onClick={() => setFormScreens({ ...formScreens, [key]: !formScreens[key] })}
+                      className={`border rounded-xl p-2 flex flex-col justify-between cursor-pointer transition-all h-12 relative select-none ${formScreens[key] ? "bg-[#FDF2F8]/40 border-[#CD176D]" : "bg-[#F8FAFC]/50 border-slate-100 hover:border-slate-200"}`}
+                    >
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-slate-800">{label}</span>
+                        <input type="checkbox" checked={formScreens[key]} onChange={() => {}} className="rounded border-slate-300 text-[#CD176D] focus:ring-[#CD176D] h-3.5 w-3.5 cursor-pointer accent-[#CD176D]" />
+                      </div>
+                      <span className="text-[9px] text-[#64748B] font-semibold">{description}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 
               {/* Modal Footer actions */}
-              <div className="pt-6 border-t border-slate-100 flex items-center justify-end gap-3">
+              <div className="order-7 pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}

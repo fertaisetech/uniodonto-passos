@@ -13,6 +13,10 @@ service cloud.firestore {
           || request.auth.token.email == "fertaisetech@gmail.com");
     }
 
+    function isPortalAdmin() {
+      return isSignedIn() && request.auth.token.email == "fertaisetech@gmail.com";
+    }
+
     match /accounts/{email} {
       allow read, write: if isSignedIn() && request.auth.token.email == email;
     }
@@ -21,8 +25,25 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
-    match /organizations/uniodonto/{document=**} {
+    match /organizations/uniodonto/months/{monthId} {
       allow read, write: if isUniodontoUser();
+    }
+
+    match /organizations/uniodonto/teamMembers/{memberId} {
+      allow read: if isUniodontoUser();
+      allow create, update, delete: if isPortalAdmin();
+    }
+
+    match /organizations/uniodonto/roleScreens/{roleId} {
+      allow read: if isUniodontoUser();
+      allow create, update, delete: if isPortalAdmin();
+    }
+
+    match /organizations/uniodonto/consents/{consentId} {
+      allow read: if isPortalAdmin()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create, update: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid;
     }
   }
 }

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { observeUserProfile, type AppUserProfile } from "../lib/firebase";
+import { logout, observeUserProfile, resolveDisplayNameFromEmail, resolveRoleFromEmail, type AppUserProfile } from "../lib/firebase";
 
 type AppSessionValue = {
   profile: AppUserProfile | null;
@@ -23,7 +23,9 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
     try {
       const saved = JSON.parse(raw) as AppUserProfile;
-      setProfile(saved);
+      const corrected = { ...saved, name: resolveDisplayNameFromEmail(saved.email || "", saved.name), role: resolveRoleFromEmail(saved.email || saved.name || "") };
+      setProfile(corrected);
+      localStorage.setItem(SESSION_KEY, JSON.stringify(corrected));
       setLoading(false);
     } catch {
       localStorage.removeItem(SESSION_KEY);
@@ -40,7 +42,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         if (!nextProfile) return;
 
         setProfile((current) => {
-          const merged = { ...(current ?? nextProfile), ...nextProfile };
+          const merged = { ...(current ?? nextProfile), ...nextProfile, name: resolveDisplayNameFromEmail(nextProfile.email || current?.email || "", nextProfile.name), role: resolveRoleFromEmail(nextProfile.email || current?.email || "") };
           localStorage.setItem(SESSION_KEY, JSON.stringify(merged));
           window.dispatchEvent(new CustomEvent("uniodonto-session-changed"));
           return merged;
@@ -79,6 +81,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = async () => {
+    await logout();
     localStorage.removeItem(SESSION_KEY);
     setProfile(null);
     window.dispatchEvent(new CustomEvent("uniodonto-session-changed"));

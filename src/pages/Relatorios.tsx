@@ -39,12 +39,35 @@ export function Relatorios() {
   const [shareCopied, setShareCopied] = useState(false);
   const [chartReady, setChartReady] = useState(false);
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
+  const [isMonthTransitioning, setIsMonthTransitioning] = useState(false);
   const chartHostRef = useRef<HTMLDivElement>(null);
 
   const { data: dashboardData, loading: isDataLoading, error } = useMonthlyDashboard(selectedMonth);
   const summary = dashboardData?.summary;
   const beneficiariesData = dashboardData?.beneficiariesData;
   const funnelData = dashboardData?.funnelData;
+  const focusLabel = reportType === "funil"
+    ? "Funil Comercial"
+    : reportType === "crescimento"
+      ? "Crescimento & NPS"
+      : "Consolidado Geral";
+  const hasCurrentMonthData = dashboardData?.month === selectedMonth;
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsMonthTransitioning(true);
+    const timeout = window.setTimeout(() => {
+      if (!cancelled) setIsMonthTransitioning(false);
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [selectedMonth]);
+
+  useEffect(() => {
+    if (hasCurrentMonthData) setIsMonthTransitioning(false);
+  }, [hasCurrentMonthData]);
 
   const handleGenerateReport = async () => {
     setIsGenerating(true);
@@ -181,7 +204,7 @@ export function Relatorios() {
     }
   };
 
-  if (isDataLoading) {
+  if (isDataLoading || isMonthTransitioning || (dashboardData && !hasCurrentMonthData)) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="w-10 h-10 border-4 border-[#A60069] border-t-transparent rounded-full animate-spin"></div>
@@ -189,16 +212,13 @@ export function Relatorios() {
     );
   }
 
-  if (error || !dashboardData || !summary) {
+  if (!dashboardData || !summary) {
     return (
       <div className="flex items-center justify-center min-h-[400px] p-6">
         <div className="max-w-xl w-full rounded-3xl border border-amber-200 bg-amber-50 p-6 text-amber-900 shadow-sm">
           <h2 className="text-lg font-black">Relatório ainda não sincronizado</h2>
           <p className="mt-2 text-sm font-medium text-amber-800">
-            {error || "Não há dados reais disponíveis para o mês selecionado no Firestore."}
-          </p>
-          <p className="mt-3 text-xs text-amber-700">
-            Execute a sincronização no backend para carregar os números oficiais da planilha.
+            Não foi possível carregar os dados deste período. Tente novamente em alguns instantes.
           </p>
         </div>
       </div>
@@ -216,6 +236,7 @@ export function Relatorios() {
     investment: summary.investment.current,
     roi: summary.roi.current,
     cac: summary.cac.current,
+    contacts: funnelData?.find((stage) => stage.stage === "Contatos")?.count || 0,
   };
   const roiMultiplier = reportStats.roi / 100;
 
@@ -247,6 +268,21 @@ export function Relatorios() {
           </div>
         </div>
       )}
+
+      {error && (
+        <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900 shadow-sm">
+          <Info className="h-5 w-5 shrink-0 text-amber-600" />
+          <p className="text-xs font-semibold">Não foi possível carregar os dados deste período. Tente novamente em alguns instantes.</p>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Foco do relatório</p>
+          <p className="mt-1 text-sm font-black text-slate-800">{focusLabel}</p>
+        </div>
+        <span className="rounded-lg bg-pink-50 px-3 py-1.5 text-[10px] font-black text-[#A60069]">{selectedMonth}</span>
+      </div>
 
       {/* Main Grid Content */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
@@ -288,7 +324,7 @@ export function Relatorios() {
               </div>
 
               {/* Data comparison blocks */}
-              <div>
+              {reportType !== "funil" && <div>
                 <h4 className="text-slate-800 font-black tracking-tight text-xs uppercase mb-4 flex items-center gap-2">
                   <PieChart className="w-4 h-4 text-[#CD176D]" />
                   Métricas Ambientais de Visão Geral (Carteira)
@@ -318,7 +354,13 @@ export function Relatorios() {
                         <TrendingUp className="w-3 h-3 mr-0.5" /> +4.8%
                       </span>
                     </div>
-                    <span className="text-[10px] font-semibold text-slate-500 mt-1.5 block">Meta: 900 novos</span>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200" aria-label={`Progresso da meta mensal: ${Math.min(100, Math.max(0, (reportStats.additions / 900) * 100)).toFixed(0)}%`}>
+                      <div
+                        className="h-full rounded-full bg-[#10B981] transition-all"
+                        style={{ width: `${Math.min(100, Math.max(0, (reportStats.additions / 900) * 100))}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] font-semibold text-slate-500 mt-1.5 block">Meta mensal: 900 novos • {Math.min(100, Math.max(0, (reportStats.additions / 900) * 100)).toFixed(0)}% atingido</span>
                   </div>
 
                   <div className="bg-slate-50/50 hover:bg-slate-50 transition-colors rounded-2xl p-4 border border-[#F1F5F9]">
@@ -334,22 +376,30 @@ export function Relatorios() {
                     <span className="text-[10px] font-semibold text-slate-500 mt-1.5 block">Baixa em relação a Abr/2026</span>
                   </div>
                 </div>
-              </div>
+              </div>}
 
               {/* Funnel Metrics Row */}
-              <div>
+              {reportType !== "crescimento" && <div>
                 <h4 className="text-slate-800 font-black tracking-tight text-xs uppercase mb-4 flex items-center gap-2">
                   <LucideBarChart className="w-4 h-4 text-[#CD176D]" />
                   Resultados do Funil de Marketing & Vendas
                 </h4>
 
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4">
                   <div className="bg-slate-50/50 hover:bg-slate-50 transition-colors rounded-2xl p-4 border border-slate-100">
                     <span className="text-[10px] font-black tracking-wider text-slate-400 block uppercase">LEADS CAPTADOS</span>
                     <span className="text-xl font-black text-slate-800 leading-none mt-2 block">
                       {reportStats.leads.toLocaleString("pt-BR")}
                     </span>
-                    <span className="text-[10px] font-semibold text-slate-500 mt-1 block">Tx Conv: 100%</span>
+                    <span className="text-[10px] font-semibold text-slate-500 mt-1 block">Variação: {summary.leads.variation >= 0 ? "+" : ""}{summary.leads.variation}%</span>
+                  </div>
+
+                  <div className="bg-slate-50/50 hover:bg-slate-50 transition-colors rounded-2xl p-4 border border-slate-100">
+                    <span className="text-[10px] font-black tracking-wider text-slate-400 block uppercase">CONTATOS</span>
+                    <span className="text-xl font-black text-slate-800 leading-none mt-2 block">
+                      {reportStats.contacts.toLocaleString("pt-BR")}
+                    </span>
+                    <span className="text-[10px] font-semibold text-slate-500 mt-1 block">Volume do estágio</span>
                   </div>
 
                   <div className="bg-slate-50/50 hover:bg-slate-50 transition-colors rounded-2xl p-4 border border-slate-100">
@@ -380,10 +430,28 @@ export function Relatorios() {
                     <span className="text-[10px] font-semibold text-slate-500 mt-1 block">Retorno invest.</span>
                   </div>
                 </div>
-              </div>
+              </div>}
+
+              {reportType === "crescimento" && (
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/50 p-5">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-tight text-slate-800">Crescimento & NPS</h4>
+                      <p className="mt-1 text-[11px] font-semibold text-slate-500">Satisfação registrada no período selecionado.</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-2xl font-black text-emerald-700">{summary.nps.current.toLocaleString("pt-BR")}</p>
+                      <p className="text-[10px] font-bold text-emerald-700">NPS • {summary.nps.variation >= 0 ? "+" : ""}{summary.nps.variation}%</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-white">
+                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, summary.nps.current))}%` }} />
+                  </div>
+                </div>
+              )}
 
               {/* Composite Performance Chart */}
-              <div>
+              {reportType !== "crescimento" && <div>
                 <h4 className="text-slate-800 font-black tracking-tight text-xs uppercase mb-3 flex items-center gap-2">
                   <Layers className="w-4 h-4 text-[#CD176D]" />
                   Evasão e Conversão de Funil
@@ -408,7 +476,7 @@ export function Relatorios() {
                     <div className="h-full w-full rounded-2xl bg-slate-50 animate-pulse" />
                   )}
                 </div>
-              </div>
+              </div>}
 
               {/* Bottom footer elements sign-off matching polished layout */}
               <div className="pt-6 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">

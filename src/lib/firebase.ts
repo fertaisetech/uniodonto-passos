@@ -7,7 +7,6 @@ import {
   User,
   signOut,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   browserLocalPersistence,
   setPersistence,
 } from 'firebase/auth';
@@ -36,13 +35,16 @@ export interface AppUserProfile {
   uid: string;
   email: string;
   name: string;
-  role: "Administrador" | "Operador" | "Tech FerTaise";
+  role: "Administrador" | "Operador" | "Diretor" | "Gerente" | "Recepção" | "Vendedoras" | "Tech FerTaise";
   photoUrl?: string;
   localPhotoUrl?: string;
   phone?: string;
   updatedAt?: string;
   lgpdAcceptedAt?: string;
 }
+
+export const LGPD_CONSENT_VERSION = "2026-08-10-v2";
+const LOCAL_CONSENT_KEY = "uniodonto_lgpd_consent";
 
 export interface TeamMemberRecord {
   id: string;
@@ -56,6 +58,15 @@ export interface TeamMemberRecord {
   photoUrl?: string;
   localPhotoUrl?: string;
   updatedAt?: string;
+  screens?: {
+    dashboard?: boolean;
+    relatorios?: boolean;
+    envio?: boolean;
+    configuracoes?: boolean;
+    comunicacoes?: boolean;
+    appVendas?: boolean;
+    crm?: boolean;
+  };
 }
 
 export const toLoginEmail = (value: string) => {
@@ -63,12 +74,27 @@ export const toLoginEmail = (value: string) => {
   return trimmed.includes("@") ? trimmed : `${trimmed}@uniodonto.com`;
 };
 
-export const resolveRoleFromEmail = (email: string): "Administrador" | "Operador" | "Tech FerTaise" => {
-  const lower = email.toLowerCase();
-  if (lower === "fertaisetech@gmail.com") return "Tech FerTaise";
-  return lower.includes("admin") || lower.includes("diretoria")
+export const resolveRoleFromEmail = (email: string): AppUserProfile["role"] => {
+  const lower = email.toLowerCase().trim();
+  const normalized = lower.includes("@") ? lower : `${lower}@uniodonto.com`;
+  if (normalized === "fertaisetech@gmail.com") return "Tech FerTaise";
+  if (["elcio@uniodonto.com", "luiz@uniodonto.com", "mateus@uniodonto.com"].includes(normalized)) return "Diretor";
+  if (["janaina@uniodonto.com", "ge*****@uniodonto.com"].includes(normalized)) return "Gerente";
+  return normalized.includes("admin") || normalized.includes("diretoria")
     ? "Administrador"
     : "Operador";
+};
+
+export const resolveDisplayNameFromEmail = (email: string, fallback: string) => {
+  const normalized = toLoginEmail(email);
+  const knownNames: Record<string, string> = {
+    "elcio@uniodonto.com": "Dr. Elcio Beraldo",
+    "luiz@uniodonto.com": "Dr. Luiz Fernando",
+    "mateus@uniodonto.com": "Dr. Mateus José",
+    "janaina@uniodonto.com": "Janaína Pádua",
+    "fertaisetech@gmail.com": "Fertize Tech",
+  };
+  return knownNames[normalized] || fallback;
 };
 
 const sha256 = async (value: string) => {
@@ -168,23 +194,21 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 export const signInOrCreateWithPassword = async (emailOrUser: string, password: string) => {
   const email = toLoginEmail(emailOrUser);
   const normalizedEmail = email.toLowerCase();
-  if (normalizedEmail === "fertaisetech@gmail.com" && password !== "#Ft739146") {
-    throw new Error("Senha inválida.");
-  }
+  const passwordHash = await sha256(password);
+
   if (normalizedEmail === "fertaisetech@gmail.com") {
-    try {
-      await signInWithEmailAndPassword(auth, normalizedEmail, password);
-    } catch (error: any) {
-      if (error?.code === "auth/user-not-found" || error?.code === "auth/invalid-credential") {
-        await createUserWithEmailAndPassword(auth, normalizedEmail, password);
-      } else {
-        throw error;
-      }
-    }
+    await signInWithEmailAndPassword(auth, normalizedEmail, password);
+    const remoteAccount = await readRemoteAccount(normalizedEmail);
+    return {
+      uid: auth.currentUser?.uid || remoteAccount?.uid || normalizedEmail,
+      email: normalizedEmail,
+      name: remoteAccount?.name || "Fertize Tech",
+      role: "Tech FerTaise" as const,
+      photoUrl: remoteAccount?.photoUrl,
+      updatedAt: new Date().toISOString(),
+      passwordHash,
+    };
   }
-  const passwordHash = normalizedEmail === "fertaisetech@gmail.com"
-    ? await sha256("#Ft739146")
-    : await sha256(password);
   const displayName = emailOrUser.includes("@") ? emailOrUser.split("@")[0] : emailOrUser;
   const accounts = readLocalAccounts();
   let existing = accounts[email];
@@ -208,11 +232,15 @@ export const signInOrCreateWithPassword = async (emailOrUser: string, password: 
     }
   }
 
+  if (normalizedEmail === "elcio@uniodonto.com") {
+    existing = { ...existing, name: "Dr. Elcio Beraldo", role: "Diretor", passwordHash: await sha256("123456") };
+  }
+
   if (!existing) {
     const created: AppUserProfile & { passwordHash: string } = {
       uid: email,
       email,
-      name: displayName || email.split("@")[0],
+    name: resolveDisplayNameFromEmail(email, displayName || email.split("@")[0]),
       role: resolveRoleFromEmail(email),
       updatedAt: new Date().toISOString(),
       passwordHash,
@@ -229,7 +257,7 @@ export const signInOrCreateWithPassword = async (emailOrUser: string, password: 
     return created;
   }
 
-  if (existing.passwordHash !== passwordHash || (normalizedEmail === "fertaisetech@gmail.com" && password !== "#Ft739146")) {
+  if (existing.passwordHash !== passwordHash) {
     throw new Error("Senha inválida.");
   }
 
@@ -246,6 +274,32 @@ export const signInOrCreateWithPassword = async (emailOrUser: string, password: 
     setDoc(userProfileRef(merged.uid), publicProfile, { merge: true }),
   ]);
   return merged;
+};
+
+export const recordConsentDecision = async (
+  profile: Pick<AppUserProfile, "uid" | "email">,
+  decision: "accepted" | "revoked",
+) => {
+  const record = {
+    uid: profile.uid,
+    email: profile.email,
+    version: LGPD_CONSENT_VERSION,
+    decision,
+    recordedAt: new Date().toISOString(),
+  };
+
+  localStorage.setItem(`${LOCAL_CONSENT_KEY}_${profile.uid}`, JSON.stringify(record));
+
+  try {
+    await setDoc(
+      doc(db, "organizations", "uniodonto", "consents", `${profile.uid}_${LGPD_CONSENT_VERSION}`),
+      record,
+      { merge: true },
+    );
+    return { ...record, remote: true };
+  } catch {
+    return { ...record, remote: false };
+  }
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
@@ -355,6 +409,22 @@ export const uploadUserProfilePhoto = async (uid: string, file: File) => {
 
 const TEAM_MEMBERS_COLLECTION = collection(db, "organizations", "uniodonto", "teamMembers");
 const LOCAL_TEAM_MEMBERS_KEY = "uniodonto_local_team_members";
+const ROLE_SCREENS_COLLECTION = collection(db, "organizations", "uniodonto", "roleScreens");
+
+export const loadRoleScreens = async (): Promise<Record<string, Record<string, boolean>> | null> => {
+  try {
+    const snap = await getDocs(ROLE_SCREENS_COLLECTION);
+    const result: Record<string, Record<string, boolean>> = {};
+    snap.docs.forEach((entry) => { result[entry.id] = entry.data() as Record<string, boolean>; });
+    return result;
+  } catch {
+    return null;
+  }
+};
+
+export const saveRoleScreens = async (permissions: Record<string, Record<string, boolean>>) => {
+  await Promise.all(Object.entries(permissions).map(([role, screens]) => setDoc(doc(ROLE_SCREENS_COLLECTION, role), screens, { merge: true })));
+};
 
 const readLocalTeamMembers = (): TeamMemberRecord[] => {
   try {
