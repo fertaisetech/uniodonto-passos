@@ -1,5 +1,10 @@
 # Dashboard Executivo Uniodonto
 
+## Documentação
+
+- [Guia completo do Portal](docs/GUIA-COMPLETO.md)
+- [Plano de implementação e entrega](docs/PLANO-IMPLEMENTACAO.md)
+
 Este é o projeto do Dashboard Executivo para a Uniodonto, desenvolvido com stack moderna e robusta para alta performance e escalabilidade.
 
 ## Tecnologias (Stack)
