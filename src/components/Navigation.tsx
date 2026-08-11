@@ -4,6 +4,8 @@ import {
   LayoutDashboard,
   BarChart,
   Send,
+  MessageSquare,
+  Users,
   Settings,
   HelpCircle,
   LogOut,
@@ -16,16 +18,22 @@ import {
   Laptop,
   Info,
   ExternalLink,
+  ShoppingCart,
 } from "lucide-react";
 import clsx from "clsx";
 import { useAppSession } from "../context/AppSessionContext";
 import { usePWAInstall } from "../hooks/usePWAInstall";
+import { canAccessScreen, type ScreenKey } from "../lib/screenAccess";
+import { CRM_URL, SALES_APP_URL } from "../config/apps";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Visão Geral", href: "/", icon: PieChart },
   { name: "Relatórios", href: "/relatorios", icon: BarChart },
   { name: "Envio e Integração", href: "/envio-integracao", icon: Send, hasChevron: true },
+  { name: "Comunicações", href: "/comunicacoes", icon: MessageSquare },
+  { name: "App de Vendas", href: "/app-vendas", icon: ShoppingCart, externalHref: SALES_APP_URL },
+  { name: "CRM", href: "/crm", icon: Users, externalHref: CRM_URL },
 ];
 
 export function Sidebar({ open, setOpen }: { open: boolean; setOpen: (open: boolean) => void }) {
@@ -74,8 +82,11 @@ export function Sidebar({ open, setOpen }: { open: boolean; setOpen: (open: bool
         open ? "translate-x-0 w-64" : "-translate-x-full"
       )}>
         {/* Header styling */}
-        <div className="flex items-center justify-between h-16 px-4 shrink-0 border-b border-white/10">
-          <div className="flex items-center gap-3 overflow-hidden">
+        <div className={clsx(
+          "relative flex items-center h-16 shrink-0 border-b border-white/10",
+          collapsed ? "justify-center px-2" : "justify-between px-4"
+        )}>
+          <div className={clsx("flex items-center gap-3 overflow-hidden", collapsed && "justify-center") }>
             <div className="w-9 h-9 rounded-xl shrink-0 bg-white flex items-center justify-center shadow-lg overflow-hidden">
               <img
                 src="/images/LogoUniodonto.webp"
@@ -96,7 +107,10 @@ export function Sidebar({ open, setOpen }: { open: boolean; setOpen: (open: bool
           <button
             type="button"
             onClick={toggleCollapsed}
-            className="hidden md:flex p-1.5 rounded-lg bg-white/10 text-white hover:bg-white/20 hover:text-white transition-all cursor-pointer"
+            className={clsx(
+              "hidden md:flex p-1.5 rounded-lg bg-white/10 text-white hover:bg-white/20 hover:text-white transition-all cursor-pointer",
+              collapsed ? "absolute right-1 top-1 z-10" : ""
+            )}
             title={collapsed ? "Expandir menu" : "Recolher menu"}
             aria-label={collapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
           >
@@ -115,33 +129,43 @@ export function Sidebar({ open, setOpen }: { open: boolean; setOpen: (open: bool
 
         {/* Main Navigation Items */}
         <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
-          {navigation.map((item) => {
+          {navigation.filter((item) => {
+            const screenByPath: Record<string, ScreenKey> = { "/": "visaoGeral", "/dashboard": "dashboard", "/relatorios": "relatorios", "/envio-integracao": "envio", "/configuracoes": "configuracoes", "/comunicacoes": "comunicacoes", "/app-vendas": "appVendas", "/crm": "crm" };
+            return canAccessScreen(profile?.role, screenByPath[item.href], profile?.screens);
+          }).map((item) => {
             const isActive = location.pathname === item.href;
-            return (
+            const linkClass = clsx(
+                "flex items-center gap-3 py-2.5 rounded-xl transition-all duration-200 group relative",
+                  isActive
+                    ? "bg-white/20 text-white font-extrabold shadow-[0_2px_12px_rgba(255,255,255,0.06)] border border-white/15 pl-4 before:absolute before:left-0 before:top-2.5 before:bottom-2.5 before:w-1 before:bg-white before:rounded-r-full"
+                    : "text-white/80 hover:bg-white/10 hover:text-white font-semibold pl-3"
+                );
+            const content = <>
+              <item.icon className="w-4.5 h-4.5 shrink-0" />
+              {!collapsed && <span className="whitespace-nowrap overflow-hidden text-sm md:text-[15px] tracking-wide flex-1 mr-2 transition-all">{item.name}</span>}
+              {!collapsed && item.hasChevron && <ChevronRight className="w-3.5 h-3.5 text-white/50 shrink-0 ml-auto" />}
+            </>;
+            return item.externalHref ? (
+            <a
+              key={item.name}
+              href={item.externalHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={item.name}
+              className={linkClass}
+              title={item.name}
+              onClick={() => setOpen(false)}
+            >{content}</a>
+            ) : (
             <Link
               key={item.name}
               to={item.href}
               aria-label={item.name}
               aria-current={isActive ? "page" : undefined}
-              className={clsx(
-                "flex items-center gap-3 py-2.5 rounded-xl transition-all duration-200 group relative",
-                  isActive
-                    ? "bg-white/20 text-white font-extrabold shadow-[0_2px_12px_rgba(255,255,255,0.06)] border border-white/15 pl-4 before:absolute before:left-0 before:top-2.5 before:bottom-2.5 before:w-1 before:bg-white before:rounded-r-full"
-                    : "text-white/80 hover:bg-white/10 hover:text-white font-semibold pl-3"
-                )}
-                title={item.name}
-                onClick={() => setOpen(false)}
-              >
-              <item.icon className="w-4.5 h-4.5 shrink-0" />
-              {!collapsed && (
-                <span className="whitespace-nowrap overflow-hidden text-sm md:text-[15px] tracking-wide flex-1 mr-2 transition-all">
-                  {item.name}
-                </span>
-              )}
-                {!collapsed && item.hasChevron && (
-                  <ChevronRight className="w-3.5 h-3.5 text-white/50 shrink-0 ml-auto" />
-                )}
-              </Link>
+              className={linkClass}
+              title={item.name}
+              onClick={() => setOpen(false)}
+            >{content}</Link>
             );
           })}
         </nav>
@@ -157,10 +181,14 @@ export function Sidebar({ open, setOpen }: { open: boolean; setOpen: (open: bool
             collapsed ? "p-1.5 justify-center" : "p-3 gap-2.5"
           )}>
             <div className={clsx(
-              "rounded-full bg-[#FF4B8B] text-white flex items-center justify-center font-extrabold border-2 border-white/20 shadow-md shrink-0 transition-all",
-              collapsed ? "w-8 h-8 text-xs" : "w-10 h-10 text-sm"
+              "rounded-full bg-[#FF4B8B] text-white flex items-center justify-center font-extrabold border-2 border-white/20 shadow-md shrink-0 transition-all overflow-hidden",
+              collapsed ? "w-9 h-9 text-xs" : "w-11 h-11 text-sm"
             )}>
-              {profile ? (profile.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase() || "OP") : "FT"}
+              {profile?.photoUrl ? (
+                <img src={profile.photoUrl} alt={`Foto de ${profile.name}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              ) : profile ? (
+                profile.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase() || "OP"
+              ) : "FT"}
             </div>
             {!collapsed && (
               <div className="min-w-0 flex-1">
@@ -418,6 +446,7 @@ export function Sidebar({ open, setOpen }: { open: boolean; setOpen: (open: bool
 
 export function BottomNav() {
   const location = useLocation();
+  const { profile } = useAppSession();
   const mobileNav = [
     { name: "Visão Geral", href: "/", icon: PieChart },
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -427,7 +456,7 @@ export function BottomNav() {
 
   return (
     <div className="no-print md:hidden fixed bottom-0 left-0 right-0 glass-card !border-x-0 !border-b-0 !rounded-none flex justify-around items-center h-16 z-40 pb-safe shadow-lg">
-      {mobileNav.map((item) => {
+      {mobileNav.filter((item) => canAccessScreen(profile?.role, ({ "/": "visaoGeral", "/dashboard": "dashboard", "/relatorios": "relatorios", "/envio-integracao": "envio" } as Record<string, ScreenKey>)[item.href], profile?.screens)).map((item) => {
         const isActive = location.pathname === item.href;
         return (
           <Link

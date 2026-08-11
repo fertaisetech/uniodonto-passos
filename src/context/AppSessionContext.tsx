@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { observeUserProfile, type AppUserProfile } from "../lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth, ensureUserProfile, loadRoleScreens, logout, observeUserProfile, resolveDisplayNameFromEmail, resolveRoleFromEmail, type AppUserProfile } from "../lib/firebase";
 
 type AppSessionValue = {
   profile: AppUserProfile | null;
@@ -15,20 +16,37 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) {
-      setLoading(false);
-      return;
-    }
+    return onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        localStorage.removeItem(SESSION_KEY);
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
 
-    try {
-      const saved = JSON.parse(raw) as AppUserProfile;
-      setProfile(saved);
-      setLoading(false);
-    } catch {
-      localStorage.removeItem(SESSION_KEY);
-      setLoading(false);
-    }
+      try {
+        const remoteProfile = await ensureUserProfile(user);
+        if (remoteProfile.status === "INATIVO") {
+          await logout();
+          localStorage.removeItem(SESSION_KEY);
+          setProfile(null);
+          setLoading(false);
+          return;
+        }
+        const corrected = {
+          ...remoteProfile,
+          name: remoteProfile.name || resolveDisplayNameFromEmail(remoteProfile.email || "", "Usuário"),
+          role: remoteProfile.role || resolveRoleFromEmail(remoteProfile.email || remoteProfile.name || ""),
+        };
+        localStorage.setItem(SESSION_KEY, JSON.stringify(corrected));
+        setProfile(corrected);
+      } catch {
+        localStorage.removeItem(SESSION_KEY);
+        setProfile(null);
+      } finally {
+        setLoading(false);
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -38,9 +56,15 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       profile.uid,
       (nextProfile) => {
         if (!nextProfile) return;
+        if (nextProfile.status === "INATIVO") {
+          localStorage.removeItem(SESSION_KEY);
+          setProfile(null);
+          void logout();
+          return;
+        }
 
         setProfile((current) => {
-          const merged = { ...(current ?? nextProfile), ...nextProfile };
+          const merged = { ...(current ?? nextProfile), ...nextProfile, name: nextProfile.name || current?.name || resolveDisplayNameFromEmail(nextProfile.email || current?.email || "", "Usuário"), role: nextProfile.role || current?.role || resolveRoleFromEmail(nextProfile.email || current?.email || "") };
           localStorage.setItem(SESSION_KEY, JSON.stringify(merged));
           window.dispatchEvent(new CustomEvent("uniodonto-session-changed"));
           return merged;
@@ -52,6 +76,16 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     );
 
     return unsubscribe;
+  }, [profile?.uid]);
+
+  useEffect(() => {
+    if (!profile?.uid) return;
+    void loadRoleScreens().then((permissions) => {
+      if (!permissions) return;
+      localStorage.setItem("uniodonto-role-screens", JSON.stringify(permissions));
+      setProfile((current) => current ? { ...current } : current);
+      window.dispatchEvent(new CustomEvent("uniodonto-permissions-changed"));
+    });
   }, [profile?.uid]);
 
   useEffect(() => {
@@ -79,6 +113,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = async () => {
+    await logout();
     localStorage.removeItem(SESSION_KEY);
     setProfile(null);
     window.dispatchEvent(new CustomEvent("uniodonto-session-changed"));

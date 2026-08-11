@@ -8,7 +8,7 @@ import { apiRouter } from "./server/routes";
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
   app.use(helmet({
     contentSecurityPolicy: false, // disabled for dev/vite

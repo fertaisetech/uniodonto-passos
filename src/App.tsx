@@ -1,13 +1,22 @@
-import { Routes, Route } from "react-router";
+import { Routes, Route, Navigate } from "react-router";
+import type { ReactNode } from "react";
 import { Layout } from "./components/Layout";
 import { Dashboard } from "./pages/Dashboard";
 import { VisaoGeral } from "./pages/VisaoGeral";
 import { Relatorios } from "./pages/Relatorios";
 import { Configuracoes } from "./pages/Configuracoes";
 import { EnvioIntegracao } from "./pages/EnvioIntegracao";
+import { Comunicacao } from "./pages/Comunicacao";
+import { AppVendas } from "./pages/AppVendas";
 import { LoginPage } from "./components/LoginPage";
 import { AppSessionProvider, useAppSession } from "./context/AppSessionContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { canAccessScreen, type ScreenKey } from "./lib/screenAccess";
+
+function ScreenGuard({ screen, children }: { screen: ScreenKey; children: ReactNode }) {
+  const { profile } = useAppSession();
+  return canAccessScreen(profile?.role, screen, profile?.screens) ? <>{children}</> : <Navigate to="/" replace />;
+}
 
 function AppRoutes() {
   const { profile, loading } = useAppSession();
@@ -27,11 +36,14 @@ function AppRoutes() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route index element={<VisaoGeral />} />
-        <Route path="dashboard" element={<Dashboard />} />
-        <Route path="relatorios" element={<Relatorios />} />
-        <Route path="configuracoes" element={<Configuracoes />} />
-        <Route path="envio-integracao" element={<EnvioIntegracao />} />
+        <Route index element={<ScreenGuard screen="visaoGeral"><VisaoGeral /></ScreenGuard>} />
+        <Route path="dashboard" element={<ScreenGuard screen="dashboard"><Dashboard /></ScreenGuard>} />
+        <Route path="relatorios" element={<ScreenGuard screen="relatorios"><Relatorios /></ScreenGuard>} />
+        <Route path="configuracoes" element={<ScreenGuard screen="configuracoes"><Configuracoes /></ScreenGuard>} />
+        <Route path="envio-integracao" element={<ScreenGuard screen="envio"><EnvioIntegracao /></ScreenGuard>} />
+        <Route path="comunicacoes" element={<ScreenGuard screen="comunicacoes"><Comunicacao /></ScreenGuard>} />
+        <Route path="comunicacao" element={<Comunicacao />} />
+        <Route path="app-vendas" element={<ScreenGuard screen="appVendas"><AppVendas /></ScreenGuard>} />
         <Route path="*" element={
           <div className="flex flex-col items-center justify-center h-[60vh] text-center">
             <h1 className="text-2xl font-bold text-text-primary">Em Desenvolvimento</h1>
