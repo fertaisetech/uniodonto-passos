@@ -12,6 +12,7 @@ import {
   User,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Calendar,
   Filter,
   Download,
@@ -101,7 +102,11 @@ export function Layout() {
       <Sidebar open={sidebarOpen} setOpen={setSidebarOpen} />
 
       <div className="flex-1 flex flex-col h-full min-w-0">
-        <header className="dashboard-header z-10 shrink-0">
+        <header
+          className={`dashboard-header z-10 shrink-0 ${
+            isDashboard ? "dashboard-header--dashboard" : ""
+          }`}
+        >
           <div className="dashboard-header__page">
             <div className="flex items-center gap-3">
               <button
@@ -199,7 +204,12 @@ export function Layout() {
                 </div>
                 <h1>
                   {isDashboard
-                    ? "Métricas do Funil"
+                    ? (
+                        <>
+                          <span className="md:hidden">Dashboard UniOdonto</span>
+                          <span className="hidden md:inline">Métricas do Funil</span>
+                        </>
+                      )
                     : location.pathname === "/configuracoes"
                       ? "Configurações"
                       : location.pathname === "/relatorios"
@@ -210,7 +220,7 @@ export function Layout() {
                             ? "Envio e Integração"
                             : "Visão Geral"}
                 </h1>
-                <p>
+                <p className={isDashboard ? "hidden md:block" : undefined}>
                   {isDashboard
                     ? "Visualização detalhada de canais e campanhas da Uniodonto."
                     : location.pathname === "/configuracoes"
@@ -256,20 +266,26 @@ export function Layout() {
                 </button>
               </div>
             ) : isDashboard ? (
-              <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
-                <select
-                  value={currentMonth}
-                  onChange={(event) => updateMonth(event.target.value)}
-                  className="w-full md:hidden h-[44px] appearance-auto rounded-xl border border-[#E2E8F0] bg-white px-3 text-sm font-extrabold text-[#A60069] shadow-sm focus:outline-none focus:ring-2 focus:ring-[#A60069]/20"
-                  aria-label={`Selecionar mês atual ${currentMonthDisplay}`}
-                >
-                  <option value="Todos">Todos os Meses</option>
-                  {monthsList.map((month) => (
-                    <option key={month} value={month}>
-                      {month}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-1 md:gap-3 w-full sm:w-auto">
+                <div className="relative w-[148px] shrink-0 self-center md:hidden">
+                  <select
+                    value={currentMonth}
+                    onChange={(event) => updateMonth(event.target.value)}
+                    className="!flex-none !h-10 !w-[148px] appearance-none rounded-xl border-2 border-[#CD176D] bg-[#FFF8FB] px-3 pr-9 text-xs font-extrabold text-[#A60069] shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-[#CD176D]/20"
+                    aria-label={`Selecionar mês atual ${currentMonthDisplay}`}
+                  >
+                    <option value="Todos">Todos os Meses</option>
+                    {monthsList.map((month) => (
+                      <option key={month} value={month}>
+                        {month}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#CD176D]"
+                  />
+                </div>
 
                 <div className="hidden md:flex flex-col sm:flex-row items-center gap-3">
                   {/* 1. Monthly navigation row */}

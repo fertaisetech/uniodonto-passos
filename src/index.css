@@ -133,6 +133,16 @@ textarea:focus:not(:focus-visible),
     padding: 14px 16px;
   }
 
+  .dashboard-header--dashboard {
+    min-height: 0;
+    gap: 4px;
+    padding: 8px 16px 9px;
+  }
+
+  .dashboard-header--dashboard .dashboard-header__page p {
+    display: none;
+  }
+
   .dashboard-header__page h1 {
     font-size: 20px;
   }
