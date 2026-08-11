@@ -21,8 +21,15 @@ export function getRoleScreenPermissions(role?: string): Record<string, boolean>
   }
 }
 
-export function canAccessScreen(role: string | undefined, screen: ScreenKey): boolean {
+export function canAccessScreen(
+  role: string | undefined,
+  screen: ScreenKey,
+  individualPermissions?: Partial<Record<ScreenKey, boolean>>,
+): boolean {
   if (!role) return false;
+  if (typeof individualPermissions?.[screen] === "boolean") {
+    return individualPermissions[screen] === true;
+  }
   const permissions = getRoleScreenPermissions(role) || defaultRoleScreens[role];
   return permissions?.[screen] === true;
 }

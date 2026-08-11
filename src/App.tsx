@@ -15,7 +15,7 @@ import { canAccessScreen, type ScreenKey } from "./lib/screenAccess";
 
 function ScreenGuard({ screen, children }: { screen: ScreenKey; children: ReactNode }) {
   const { profile } = useAppSession();
-  return canAccessScreen(profile?.role, screen) ? <>{children}</> : <Navigate to="/" replace />;
+  return canAccessScreen(profile?.role, screen, profile?.screens) ? <>{children}</> : <Navigate to="/" replace />;
 }
 
 function AppRoutes() {

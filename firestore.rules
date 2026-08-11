@@ -14,7 +14,9 @@ service cloud.firestore {
     }
 
     function isPortalAdmin() {
-      return isSignedIn() && request.auth.token.email == "fertaisetech@gmail.com";
+      return isSignedIn()
+        && (request.auth.token.email == "fertaisetech@gmail.com"
+          || request.auth.token.email == "admin@uniodonto.com");
     }
 
     match /accounts/{email} {
@@ -22,7 +24,9 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read, write: if isSignedIn() && request.auth.uid == uid;
+      allow read: if (isSignedIn() && request.auth.uid == uid) || isPortalAdmin();
+      allow create, update: if (isSignedIn() && request.auth.uid == uid) || isPortalAdmin();
+      allow delete: if isPortalAdmin();
     }
 
     match /organizations/uniodonto/months/{monthId} {
@@ -32,6 +36,10 @@ service cloud.firestore {
     match /organizations/uniodonto/teamMembers/{memberId} {
       allow read: if isUniodontoUser();
       allow create, update, delete: if isPortalAdmin();
+    }
+
+    match /organizations/uniodonto/teamCredentials/{memberId} {
+      allow read, create, update, delete: if isPortalAdmin();
     }
 
     match /organizations/uniodonto/roleScreens/{roleId} {

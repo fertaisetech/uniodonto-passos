@@ -15,7 +15,9 @@
     "test:watch": "vitest",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "importar:planilha": "tsx scripts/importar-planilha-vendas.ts"
+    "importar:planilha": "tsx scripts/importar-planilha-vendas.ts",
+    "sincronizar:base-dashboard": "tsx scripts/sincronizar-base-dashboard-2026.ts",
+    "sincronizar:usuarios": "tsx scripts/sincronizar-usuarios-auth-firestore.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -41,6 +41,8 @@ export interface AppUserProfile {
   phone?: string;
   updatedAt?: string;
   lgpdAcceptedAt?: string;
+  status?: "ATIVO" | "INATIVO";
+  screens?: TeamMemberRecord["screens"];
 }
 
 export const LGPD_CONSENT_VERSION = "2026-08-10-v2";
@@ -57,6 +59,7 @@ export interface TeamMemberRecord {
   isPhoto?: boolean;
   photoUrl?: string;
   localPhotoUrl?: string;
+  accessPassword?: string;
   updatedAt?: string;
   screens?: {
     dashboard?: boolean;
@@ -78,8 +81,9 @@ export const resolveRoleFromEmail = (email: string): AppUserProfile["role"] => {
   const lower = email.toLowerCase().trim();
   const normalized = lower.includes("@") ? lower : `${lower}@uniodonto.com`;
   if (normalized === "fertaisetech@gmail.com") return "Tech FerTaise";
-  if (["elcio@uniodonto.com", "luiz@uniodonto.com", "mateus@uniodonto.com"].includes(normalized)) return "Diretor";
+  if (["elcio@uniodonto.com", "luiz@uniodonto.com", "luizfernando@uniodonto.com", "mateus@uniodonto.com"].includes(normalized)) return "Diretor";
   if (["janaina@uniodonto.com", "ge*****@uniodonto.com"].includes(normalized)) return "Gerente";
+  if (normalized === "recepção@uniodonto.com" || normalized === "recepcao@uniodonto.com") return "Recepção";
   return normalized.includes("admin") || normalized.includes("diretoria")
     ? "Administrador"
     : "Operador";
@@ -90,62 +94,21 @@ export const resolveDisplayNameFromEmail = (email: string, fallback: string) => 
   const knownNames: Record<string, string> = {
     "elcio@uniodonto.com": "Dr. Elcio Beraldo",
     "luiz@uniodonto.com": "Dr. Luiz Fernando",
+    "luizfernando@uniodonto.com": "Dr. Luiz Fernando",
     "mateus@uniodonto.com": "Dr. Mateus José",
     "janaina@uniodonto.com": "Janaína Pádua",
-    "fertaisetech@gmail.com": "Fertize Tech",
+    "fertaisetech@gmail.com": "FerTaise Tech",
+    "admin@uniodonto.com": "Administrador Uniodonto",
+    "recepção@uniodonto.com": "Recepção Uniodonto",
+    "recepcao@uniodonto.com": "Recepção Uniodonto",
   };
   return knownNames[normalized] || fallback;
 };
 
-const sha256 = async (value: string) => {
-  const bytes = new TextEncoder().encode(value);
-  const hash = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
-};
-
-const ACCOUNT_COLLECTION = "accounts";
 const PROFILE_COLLECTION = "users";
 
-export const userAccountRef = (email: string) => doc(db, ACCOUNT_COLLECTION, toLoginEmail(email));
-const legacyUserAccountRef = (email: string) => doc(db, PROFILE_COLLECTION, toLoginEmail(email));
-const LOCAL_ACCOUNTS_KEY = "uniodonto_local_accounts";
-
-const readLocalAccounts = () => {
-  try {
-    return JSON.parse(localStorage.getItem(LOCAL_ACCOUNTS_KEY) || "{}") as Record<string, AppUserProfile & { passwordHash: string }>;
-  } catch {
-    return {};
-  }
-};
-
-const writeLocalAccounts = (accounts: Record<string, AppUserProfile & { passwordHash: string }>) => {
-  localStorage.setItem(LOCAL_ACCOUNTS_KEY, JSON.stringify(accounts));
-};
-
-const stripPasswordHash = (account: AppUserProfile & { passwordHash?: string }) => {
-  const { passwordHash: _passwordHash, ...publicProfile } = account;
-  return publicProfile;
-};
-
-const readRemoteAccount = async (email: string) => {
-  const normalizedEmail = toLoginEmail(email);
-
-  try {
-    const currentSnap = await getDoc(userAccountRef(normalizedEmail));
-    if (currentSnap.exists()) {
-      return currentSnap.data() as AppUserProfile & { passwordHash?: string };
-    }
-
-    const legacySnap = await getDoc(legacyUserAccountRef(normalizedEmail));
-    if (legacySnap.exists()) {
-      return legacySnap.data() as AppUserProfile & { passwordHash?: string };
-    }
-  } catch {
-    // If Firestore is protected by authenticated-only rules, fall back to local bootstrap.
-  }
-
-  return null;
-};
+const withoutUndefined = <T extends object>(value: T): T =>
+  Object.fromEntries(Object.entries(value).filter(([, fieldValue]) => fieldValue !== undefined)) as T;
 
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
@@ -193,87 +156,41 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
 export const signInOrCreateWithPassword = async (emailOrUser: string, password: string) => {
   const email = toLoginEmail(emailOrUser);
-  const normalizedEmail = email.toLowerCase();
-  const passwordHash = await sha256(password);
+  const credential = await signInWithEmailAndPassword(auth, email, password);
+  const firebaseUser = credential.user;
+  const normalizedEmail = (firebaseUser.email || email).toLowerCase();
 
-  if (normalizedEmail === "fertaisetech@gmail.com") {
-    await signInWithEmailAndPassword(auth, normalizedEmail, password);
-    const remoteAccount = await readRemoteAccount(normalizedEmail);
-    return {
-      uid: auth.currentUser?.uid || remoteAccount?.uid || normalizedEmail,
-      email: normalizedEmail,
-      name: remoteAccount?.name || "Fertize Tech",
-      role: "Tech FerTaise" as const,
-      photoUrl: remoteAccount?.photoUrl,
-      updatedAt: new Date().toISOString(),
-      passwordHash,
-    };
-  }
-  const displayName = emailOrUser.includes("@") ? emailOrUser.split("@")[0] : emailOrUser;
-  const accounts = readLocalAccounts();
-  let existing = accounts[email];
+  const memberSnapshot = await getDocs(query(
+    collection(db, "organizations", "uniodonto", "teamMembers"),
+    orderBy("name", "asc"),
+  ));
+  const member = memberSnapshot.docs
+    .map((entry) => entry.data() as TeamMemberRecord)
+    .find((entry) => entry.id === firebaseUser.uid || entry.email.toLowerCase() === normalizedEmail);
 
-  if (!existing) {
-    const remoteAccount = await readRemoteAccount(email);
-    if (remoteAccount?.passwordHash) {
-      existing = {
-        uid: remoteAccount.uid || email,
-        email: remoteAccount.email || email,
-        name: remoteAccount.name || displayName || email.split("@")[0],
-        role: remoteAccount.role || resolveRoleFromEmail(email),
-        photoUrl: remoteAccount.photoUrl,
-        phone: remoteAccount.phone,
-        updatedAt: remoteAccount.updatedAt,
-        lgpdAcceptedAt: remoteAccount.lgpdAcceptedAt,
-        passwordHash: remoteAccount.passwordHash,
-      };
-      accounts[email] = existing;
-      writeLocalAccounts(accounts);
-    }
+  if (member?.status === "INATIVO") {
+    await signOut(auth);
+    throw new Error("Esta conta está inativa.");
   }
 
-  if (normalizedEmail === "elcio@uniodonto.com") {
-    existing = { ...existing, name: "Dr. Elcio Beraldo", role: "Diretor", passwordHash: await sha256("123456") };
-  }
-
-  if (!existing) {
-    const created: AppUserProfile & { passwordHash: string } = {
-      uid: email,
-      email,
-    name: resolveDisplayNameFromEmail(email, displayName || email.split("@")[0]),
-      role: resolveRoleFromEmail(email),
-      updatedAt: new Date().toISOString(),
-      passwordHash,
-    };
-
-    accounts[email] = created;
-    writeLocalAccounts(accounts);
-
-    const publicProfile = stripPasswordHash(created);
-    void Promise.allSettled([
-      setDoc(userAccountRef(email), created, { merge: true }),
-      setDoc(userProfileRef(created.uid), publicProfile, { merge: true }),
-    ]);
-    return created;
-  }
-
-  if (existing.passwordHash !== passwordHash) {
-    throw new Error("Senha inválida.");
-  }
-
-  const merged = {
-    ...existing,
+  const profileRef = doc(db, PROFILE_COLLECTION, firebaseUser.uid);
+  const profileSnapshot = await getDoc(profileRef);
+  const savedProfile = profileSnapshot.exists() ? profileSnapshot.data() as Partial<AppUserProfile> : {};
+  const role = (member?.role || savedProfile.role || resolveRoleFromEmail(normalizedEmail)) as AppUserProfile["role"];
+  const profile: AppUserProfile = {
+    ...savedProfile,
+    uid: firebaseUser.uid,
+    email: normalizedEmail,
+    name: member?.name || savedProfile.name || resolveDisplayNameFromEmail(normalizedEmail, firebaseUser.displayName || normalizedEmail.split("@")[0]),
+    role,
+    status: member?.status || savedProfile.status || "ATIVO",
+    screens: member?.screens || savedProfile.screens,
+    photoUrl: member?.photoUrl || savedProfile.photoUrl || firebaseUser.photoURL || undefined,
     updatedAt: new Date().toISOString(),
   };
-  accounts[email] = merged;
-  writeLocalAccounts(accounts);
 
-  const publicProfile = stripPasswordHash(merged);
-  void Promise.allSettled([
-    setDoc(userAccountRef(email), merged, { merge: true }),
-    setDoc(userProfileRef(merged.uid), publicProfile, { merge: true }),
-  ]);
-  return merged;
+  await setDoc(profileRef, withoutUndefined(profile), { merge: true });
+  return profile;
 };
 
 export const recordConsentDecision = async (
@@ -326,7 +243,7 @@ export const ensureUserProfile = async (user: User): Promise<AppUserProfile> => 
   };
 
   if (!snap.exists()) {
-    await setDoc(ref, fallbackProfile, { merge: true });
+    await setDoc(ref, withoutUndefined(fallbackProfile), { merge: true });
     return fallbackProfile;
   }
 
@@ -336,7 +253,7 @@ export const ensureUserProfile = async (user: User): Promise<AppUserProfile> => 
     ...data,
   } as AppUserProfile;
 
-  await setDoc(ref, merged, { merge: true });
+  await setDoc(ref, withoutUndefined(merged), { merge: true });
   return merged;
 };
 
@@ -346,25 +263,9 @@ export const saveUserProfile = async (profile: AppUserProfile) => {
     updatedAt: new Date().toISOString(),
   };
 
-  const accounts = readLocalAccounts();
-  const existing = accounts[toLoginEmail(profile.email)];
-  if (existing) {
-    accounts[toLoginEmail(profile.email)] = {
-      ...existing,
-      ...nextProfile,
-      passwordHash: existing.passwordHash,
-    };
-    writeLocalAccounts(accounts);
-  }
-
+  const { localPhotoUrl: _localPhotoUrl, ...remoteProfile } = nextProfile;
+  await setDoc(userProfileRef(profile.uid), withoutUndefined(remoteProfile), { merge: true });
   localStorage.setItem(`uniodonto_profile_${profile.uid}`, JSON.stringify(nextProfile));
-
-  try {
-    const { localPhotoUrl: _localPhotoUrl, ...remoteProfile } = nextProfile;
-    await setDoc(userProfileRef(profile.uid), remoteProfile, { merge: true });
-  } catch {
-    // Keep the local profile saved when Firebase is unavailable.
-  }
 };
 
 export const observeUserProfile = (
@@ -394,20 +295,12 @@ export const uploadUserProfilePhoto = async (uid: string, file: File) => {
   const fileName = `${Date.now()}-${file.name}`;
   const ref = storageRef(storage, `profile-photos/${uid}/${fileName}`);
 
-  try {
-    await uploadBytes(ref, file);
-    return await getDownloadURL(ref);
-  } catch {
-    return await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
-  }
+  await uploadBytes(ref, file);
+  return await getDownloadURL(ref);
 };
 
 const TEAM_MEMBERS_COLLECTION = collection(db, "organizations", "uniodonto", "teamMembers");
+const TEAM_CREDENTIALS_COLLECTION = collection(db, "organizations", "uniodonto", "teamCredentials");
 const LOCAL_TEAM_MEMBERS_KEY = "uniodonto_local_team_members";
 const ROLE_SCREENS_COLLECTION = collection(db, "organizations", "uniodonto", "roleScreens");
 
@@ -439,20 +332,38 @@ const writeLocalTeamMembers = (members: TeamMemberRecord[]) => {
   localStorage.setItem(LOCAL_TEAM_MEMBERS_KEY, JSON.stringify(members));
 };
 
-const mergeTeamMembers = (remoteMembers: TeamMemberRecord[]) => {
-  const byId = new Map(remoteMembers.map((member) => [member.id, member]));
-  for (const localMember of readLocalTeamMembers()) {
-    byId.set(localMember.id, localMember);
+const mergeTeamMembers = (remoteMembers: TeamMemberRecord[]) =>
+  [...remoteMembers].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+
+const attachMemberPasswords = async (members: TeamMemberRecord[]) => {
+  try {
+    const credentials = await getDocs(TEAM_CREDENTIALS_COLLECTION);
+    const passwords = new Map(credentials.docs.map((entry) => [entry.id, String(entry.data().accessPassword || "")]));
+    const missing = members.filter((member) => !passwords.has(member.id) && member.email.toLowerCase() !== "fertaisetech@gmail.com");
+    await Promise.all(missing.map((member) => {
+      const accessPassword = `${member.email.split("@")[0]}123`;
+      passwords.set(member.id, accessPassword);
+      return setDoc(doc(TEAM_CREDENTIALS_COLLECTION, member.id), {
+        accessPassword,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+    }));
+    return members.map((member) => ({ ...member, accessPassword: passwords.get(member.id) || member.accessPassword }));
+  } catch {
+    return members;
   }
-  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 };
 
 export const loadTeamMembers = async (): Promise<TeamMemberRecord[]> => {
   try {
     const snap = await getDocs(query(TEAM_MEMBERS_COLLECTION, orderBy("name", "asc")));
-    return mergeTeamMembers(snap.docs.map((document) => document.data() as TeamMemberRecord));
-  } catch {
-    return readLocalTeamMembers().sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+    const members = mergeTeamMembers(await attachMemberPasswords(snap.docs.map((document) => document.data() as TeamMemberRecord)));
+    writeLocalTeamMembers(members);
+    return members;
+  } catch (error) {
+    const cached = readLocalTeamMembers();
+    if (cached.length > 0) return mergeTeamMembers(cached);
+    throw error;
   }
 };
 
@@ -462,12 +373,12 @@ export const observeTeamMembers = (
 ) => {
   return onSnapshot(
     query(TEAM_MEMBERS_COLLECTION, orderBy("name", "asc")),
-    (snap) => {
-      onChange(mergeTeamMembers(snap.docs.map((document) => document.data() as TeamMemberRecord)));
+    async (snap) => {
+      const members = mergeTeamMembers(await attachMemberPasswords(snap.docs.map((document) => document.data() as TeamMemberRecord)));
+      if (members.length > 0) writeLocalTeamMembers(members);
+      onChange(members.length > 0 ? members : mergeTeamMembers(readLocalTeamMembers()));
     },
     (error) => {
-      const localMembers = readLocalTeamMembers().sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-      if (localMembers.length > 0) onChange(localMembers);
       if (onError) {
         onError(error instanceof Error ? error : new Error("Falha ao ler os membros da equipe no Firestore."));
       }
@@ -481,40 +392,40 @@ export const saveTeamMember = async (member: TeamMemberRecord) => {
     updatedAt: new Date().toISOString(),
   };
 
+  const { localPhotoUrl: _localPhotoUrl, accessPassword, ...remoteMember } = nextMember;
+  const writes: Promise<unknown>[] = [
+    setDoc(doc(TEAM_MEMBERS_COLLECTION, member.id), remoteMember, { merge: true }),
+    setDoc(userProfileRef(member.id), {
+      uid: member.id,
+      email: member.email,
+      name: member.name,
+      role: member.role,
+      status: member.status,
+      screens: member.screens,
+      photoUrl: member.photoUrl || null,
+      updatedAt: nextMember.updatedAt,
+    }, { merge: true }),
+  ];
+  if (accessPassword !== undefined) {
+    writes.push(setDoc(doc(TEAM_CREDENTIALS_COLLECTION, member.id), {
+      accessPassword,
+      updatedAt: nextMember.updatedAt,
+    }, { merge: true }));
+  }
+  await Promise.all(writes);
   const localMembers = readLocalTeamMembers().filter((current) => current.id !== member.id);
   writeLocalTeamMembers([...localMembers, nextMember]);
-
-  try {
-    const { localPhotoUrl: _localPhotoUrl, ...remoteMember } = nextMember;
-    await setDoc(doc(TEAM_MEMBERS_COLLECTION, member.id), remoteMember, { merge: true });
-  } catch {
-    // The local login can be active without a Firebase Auth session.
-    // Keep the change available in this browser until remote access is restored.
-  }
 };
 
 export const deleteTeamMember = async (memberId: string) => {
+  await deleteDoc(doc(TEAM_MEMBERS_COLLECTION, memberId));
   writeLocalTeamMembers(readLocalTeamMembers().filter((member) => member.id !== memberId));
-  try {
-    await deleteDoc(doc(TEAM_MEMBERS_COLLECTION, memberId));
-  } catch {
-    // Local deletion is already complete when Firebase is unavailable.
-  }
 };
 
 export const uploadTeamMemberPhoto = async (memberId: string, file: File) => {
   const fileName = `${Date.now()}-${file.name}`;
   const ref = storageRef(storage, `team-member-photos/${memberId}/${fileName}`);
 
-  try {
-    await uploadBytes(ref, file);
-    return await getDownloadURL(ref);
-  } catch {
-    return await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
-  }
+  await uploadBytes(ref, file);
+  return await getDownloadURL(ref);
 };

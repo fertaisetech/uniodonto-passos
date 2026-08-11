@@ -1,8 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ResponsiveContainer } from "recharts";
+import {
+  cloneElement,
+  useEffect,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 
 type SafeChartContainerProps = {
-  children: ReactNode;
+  children: ReactElement<{ width?: number; height?: number }>;
   height: number;
   empty?: boolean;
   emptyMessage?: string;
@@ -48,14 +53,10 @@ export function SafeChartContainer({
           {emptyMessage}
         </div>
       ) : validDimensions ? (
-        <ResponsiveContainer
-          width="100%"
-          height="100%"
-          minWidth={1}
-          minHeight={1}
-        >
-          {children}
-        </ResponsiveContainer>
+        cloneElement(children, {
+          width: Math.max(1, Math.floor(size.width)),
+          height: Math.max(1, Math.floor(size.height)),
+        })
       ) : (
         <div className="flex h-full items-center justify-center text-xs font-semibold text-slate-400">
           Carregando gráfico…

@@ -1,9 +1,4 @@
 import { Router } from "express";
-import { cert, getApps, initializeApp } from "firebase-admin/app";
-import {
-  FieldValue,
-  getFirestore as getAdminFirestore,
-} from "firebase-admin/firestore";
 import { google } from "googleapis";
 import type {
   BeneficiariesData,
@@ -66,18 +61,6 @@ const getSheetsClient = () => {
   });
   return google.sheets({ version: "v4", auth });
 };
-
-const getAdminDb = () => {
-  if (!getApps().length) {
-    initializeApp({
-      credential: cert(getServiceAccount()),
-    });
-  }
-
-  return getAdminFirestore();
-};
-
-const monthDocId = (month: string) => month.replace(/\//g, "-");
 
 const normalizeMonth = (value?: string | null) =>
   value?.trim() || DEFAULT_MONTH;
@@ -251,21 +234,6 @@ const resolveMonthlyDocument = (
   };
 };
 
-const syncMonthlyDocumentToFirestore = async (
-  record: MonthlyDashboardDocument,
-) => {
-  const firestore = getAdminDb();
-  await firestore
-    .doc(`organizations/uniodonto/months/${monthDocId(record.month)}`)
-    .set(
-      {
-        ...record,
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
-};
-
 const getMonthlyDocument = async (month?: string | null) => {
   const row = await findMonthlyRow(month);
   return resolveMonthlyDocument(row, month);
@@ -381,23 +349,11 @@ apiRouter.get("/sync/status", async (req, res) => {
 });
 
 apiRouter.post("/sync", async (req, res) => {
-  try {
-    const month = normalizeMonth(req.body?.month || req.query.month);
-    const record = await getMonthlyDocument(month);
-    await syncMonthlyDocumentToFirestore(record);
-
-    return res.json({
-      status: "success",
-      source: "google-sheets",
-      target: "firestore",
-      month,
-      message: `Monthly data for ${month} synchronized successfully.`,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      status: "error",
-      error: "Failed to synchronize monthly data from Google Sheets.",
-      details: error instanceof Error ? error.message : "Unknown error",
-    });
-  }
+  const month = normalizeMonth(req.body?.month || req.query.month);
+  return res.status(409).json({
+    status: "disabled",
+    month,
+    error:
+      "A sincronização antiga foi desativada para proteger a base oficial versionada.",
+  });
 });

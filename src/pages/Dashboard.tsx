@@ -95,6 +95,11 @@ export function Dashboard() {
   }
 
   const { summary } = dashboardData;
+  const operationalAvailable =
+    dashboardData.dataQuality?.operationalStatus === "actual" ||
+    dashboardData.dataQuality?.operationalStatus === "partial";
+  const investmentProjected =
+    dashboardData.dataQuality?.investmentStatus === "projected";
   const investmentTarget =
     Number(summary.investment.target) ||
     Number(summary.investment.current) ||
@@ -103,12 +108,21 @@ export function Dashboard() {
     investmentTarget > 0
       ? (Number(summary.investment.current) / investmentTarget) * 100
       : 0;
-  const roiFactor = Number(summary.roi.current) / 100;
+  const roiAvailable = summary.roi.available !== false;
+  const npsAvailable = summary.nps.available !== false;
+  const roiFactor = roiAvailable ? Number(summary.roi.current) / 100 : 0;
   const roiEfficiency = Math.max(0, Math.min(100, roiFactor * 25));
   const ltvEstimated = (Number(summary.cac.current) || 0) * roiFactor;
   const npsVariation = Number(summary.nps.variation) || 0;
-  const npsClassification =
-    summary.nps.current >= 75
+  const npsPromoters = Number(dashboardData.npsSurvey?.promoters || 0);
+  const npsPassives = Number(dashboardData.npsSurvey?.passives || 0);
+  const npsDetractors = Number(dashboardData.npsSurvey?.detractors || 0);
+  const npsResponses = npsPromoters + npsPassives + npsDetractors;
+  const npsPromoterRate = npsResponses > 0 ? (npsPromoters / npsResponses) * 100 : 0;
+  const npsDetractorRate = npsResponses > 0 ? (npsDetractors / npsResponses) * 100 : 0;
+  const npsClassification = !npsAvailable
+    ? "Indisponível"
+    : summary.nps.current >= 75
       ? "Excelência"
       : summary.nps.current >= 50
         ? "Muito bom"
@@ -188,9 +202,9 @@ export function Dashboard() {
   );
   if (summaryPeriod === "all") {
     periodSummary.cac.current = periodSummary.investment.current / Math.max(1, periodSummary.sales.current);
-    periodSummary.roi.current = periodSummary.investment.current > 0
-      ? (periodSummary.sales.current / periodSummary.investment.current) * 100
-      : 0;
+    periodSummary.cac.available = periodSummary.sales.current > 0;
+    periodSummary.roi.current = 0;
+    periodSummary.roi.available = false;
   }
   const periodInvestments = periodRecords.flatMap(
     (record) => record.investments || [],
@@ -573,7 +587,7 @@ export function Dashboard() {
 
                 <div className="mt-2 space-y-0.5 text-xs border-t border-border pt-1.5 text-text-secondary leading-tight">
                   <div className="flex justify-between text-[11px]">
-                    <span>Total de ativos</span>
+                    <span>{operationalAvailable ? "Total de ativos" : "Último total conhecido"}</span>
                     <span className="font-semibold text-text-primary">
                       {summary.beneficiaries.current.toLocaleString("pt-BR")}
                     </span>
@@ -581,13 +595,17 @@ export function Dashboard() {
                   <div className="flex justify-between text-[11px]">
                     <span>Novos do mês</span>
                     <span className="font-semibold text-text-primary">
-                      {summary.additions.current.toLocaleString("pt-BR")}
+                      {operationalAvailable
+                        ? summary.additions.current.toLocaleString("pt-BR")
+                        : "Indisponível"}
                     </span>
                   </div>
                   <div className="flex justify-between text-[11px]">
                     <span>Cancelamentos</span>
                     <span className="font-semibold text-text-primary text-danger">
-                      {summary.cancellations.current.toLocaleString("pt-BR")}
+                      {operationalAvailable
+                        ? summary.cancellations.current.toLocaleString("pt-BR")
+                        : "Indisponível"}
                     </span>
                   </div>
                 </div>
@@ -650,9 +668,16 @@ export function Dashboard() {
             >
               <div>
                 <div className="flex justify-between items-start">
-                  <span className="text-[9px] uppercase tracking-wider font-extrabold text-[#A60069]">
-                    Investimento
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] uppercase tracking-wider font-extrabold text-[#A60069]">
+                      Investimento
+                    </span>
+                    {investmentProjected && (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[8px] font-extrabold uppercase text-amber-700">
+                        Projeção
+                      </span>
+                    )}
+                  </div>
                   <HelpCircle className="w-3 h-3 text-text-secondary cursor-pointer" />
                 </div>
                 <div className="flex items-baseline mt-1 gap-1.5">
@@ -715,38 +740,38 @@ export function Dashboard() {
                 </div>
                 <div className="flex items-baseline mt-1 gap-1.5">
                   <span className="text-2xl font-black text-text-primary tracking-tight whitespace-nowrap">
-                    {(summary.roi.current / 100).toFixed(1)}x
+                    {roiAvailable ? `${(summary.roi.current / 100).toFixed(1)}x` : "Indisponível"}
                   </span>
-                  <span className="text-[10px] font-bold text-success flex items-center whitespace-nowrap">
+                  {roiAvailable && <span className="text-[10px] font-bold text-success flex items-center whitespace-nowrap">
                     <TrendingUp className="w-2.5 h-2.5 mr-0.5" />{" "}
                     {summary.roi.variation >= 0 ? "+" : ""}
                     {(Number(summary.roi.variation) / 100)
                       .toFixed(1)
                       .replace(".", ",")}
                     x
-                  </span>
-                  <span className="text-[9px] text-text-secondary whitespace-nowrap">
+                  </span>}
+                  {roiAvailable && <span className="text-[9px] text-text-secondary whitespace-nowrap">
                     vs. anterior
-                  </span>
+                  </span>}
                 </div>
 
                 <div className="mt-2 space-y-0.5 text-xs border-t border-border pt-1.5 text-text-secondary leading-tight">
                   <div className="flex justify-between text-[11px]">
                     <span>CAC do período</span>
                     <span className="font-semibold text-text-primary">
-                      {formatBRL(summary.cac.current)}
+                      {summary.cac.available === false ? "Indisponível" : formatBRL(summary.cac.current)}
                     </span>
                   </div>
                   <div className="flex justify-between text-[11px]">
                     <span>LTV Estimado</span>
                     <span className="font-semibold text-text-primary">
-                      {formatBRL(ltvEstimated)}
+                      {roiAvailable ? formatBRL(ltvEstimated) : "Indisponível"}
                     </span>
                   </div>
                   <div className="flex justify-between text-[11px]">
                     <span>Fator LTV/CAC</span>
                     <span className="font-semibold text-text-primary">
-                      {(summary.roi.current / 100).toFixed(1)}x
+                      {roiAvailable ? `${(summary.roi.current / 100).toFixed(1)}x` : "Indisponível"}
                     </span>
                   </div>
                 </div>
@@ -756,7 +781,7 @@ export function Dashboard() {
                 <div className="flex justify-between text-[10px] text-text-secondary mb-1 font-medium leading-none">
                   <span>Eficiência de ROI</span>
                   <span className="font-bold text-text-primary">
-                    {roiEfficiency.toFixed(0)}%
+                    {roiAvailable ? `${roiEfficiency.toFixed(0)}%` : "—"}
                   </span>
                 </div>
                 <div className="w-full bg-[#E2E8F0] h-1.5 rounded-full overflow-hidden">
@@ -782,16 +807,16 @@ export function Dashboard() {
                 </div>
                 <div className="flex items-baseline mt-1 gap-1.5">
                   <span className="text-2xl font-black text-text-primary tracking-tight whitespace-nowrap">
-                    {summary.nps.current}
+                    {npsAvailable ? summary.nps.current : "Indisponível"}
                   </span>
-                  <span className="text-[10px] font-bold text-success flex items-center whitespace-nowrap">
+                  {npsAvailable && <span className="text-[10px] font-bold text-success flex items-center whitespace-nowrap">
                     <TrendingUp className="w-2.5 h-2.5 mr-0.5" />{" "}
                     {npsVariation >= 0 ? "+" : ""}
                     {npsVariation} pts
-                  </span>
-                  <span className="text-[9px] text-text-secondary whitespace-nowrap">
+                  </span>}
+                  {npsAvailable && <span className="text-[9px] text-text-secondary whitespace-nowrap">
                     vs. anterior
-                  </span>
+                  </span>}
                 </div>
 
                 <div className="mt-2 space-y-0.5 text-xs border-t border-border pt-1.5 text-text-secondary leading-tight">
@@ -804,13 +829,15 @@ export function Dashboard() {
                   <div className="flex justify-between text-[11px]">
                     <span>Total de respostas</span>
                     <span className="font-semibold text-text-primary">
-                      {summary.leads.current}
+                      {npsAvailable ? npsResponses.toLocaleString("pt-BR") : "Indisponível"}
                     </span>
                   </div>
                   <div className="flex justify-between text-[11px]">
                     <span>Detratores / Promotores</span>
                     <span className="font-semibold text-text-primary">
-                      4% / {summary.nps.current}%
+                      {npsAvailable
+                        ? `${npsDetractorRate.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% / ${npsPromoterRate.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`
+                        : "Indisponível"}
                     </span>
                   </div>
                 </div>
@@ -820,13 +847,15 @@ export function Dashboard() {
                 <div className="flex justify-between text-[10px] text-text-secondary mb-1 font-medium leading-none">
                   <span>Taxa de Promotores</span>
                   <span className="font-bold text-text-primary">
-                    {summary.nps.current}%
+                    {npsAvailable
+                      ? `${npsPromoterRate.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`
+                      : "—"}
                   </span>
                 </div>
                 <div className="w-full bg-[#E2E8F0] h-1.5 rounded-full overflow-hidden">
                   <div
                     className="bg-[#A60069] h-full rounded-full"
-                    style={{ width: "78%" }}
+                    style={{ width: npsAvailable ? `${Math.max(0, Math.min(100, npsPromoterRate))}%` : "0%" }}
                   ></div>
                 </div>
               </div>
@@ -1519,21 +1548,21 @@ export function Dashboard() {
                       <EvolutionSummary
                         icon={Users}
                         title="Novos beneficiários"
-                        value={evolutionEntries}
+                        value={operationalData ? evolutionEntries : "Indisponível"}
                         subtitle={`Entradas em ${selectedMonth.split("/")[0]?.toLowerCase() || "mês"}`}
                         tone="green"
                       />
                       <EvolutionSummary
                         icon={XCircle}
                         title="Cancelamentos"
-                        value={evolutionCancellations}
+                        value={operationalData ? evolutionCancellations : "Indisponível"}
                         subtitle={`Exclusões em ${selectedMonth.split("/")[0]?.toLowerCase() || "mês"}`}
                         tone="red"
                       />
                       <EvolutionSummary
                         icon={TrendingUp}
                         title="Saldo líquido"
-                        value={evolutionBalance}
+                        value={operationalData ? evolutionBalance : "Indisponível"}
                         subtitle="Entradas menos cancelamentos"
                         tone={
                           evolutionBalance > 0
@@ -1722,7 +1751,7 @@ function EvolutionSummary({
 }: {
   icon: typeof Users;
   title: string;
-  value: number;
+  value: number | string;
   subtitle: string;
   tone: "green" | "red" | "neutral";
   signed?: boolean;
@@ -1743,8 +1772,14 @@ function EvolutionSummary({
             {title}
           </span>
           <strong className="block text-lg font-black leading-tight">
-            {signed && value > 0 ? "+" : ""}
-            {formatDashboardNumber(value)}
+            {typeof value === "number" ? (
+              <>
+                {signed && value > 0 ? "+" : ""}
+                {formatDashboardNumber(value)}
+              </>
+            ) : (
+              <span className="text-xs">{value}</span>
+            )}
           </strong>
           <span className="block line-clamp-2 text-[8px] font-bold leading-tight opacity-80">{subtitle}</span>
         </div>

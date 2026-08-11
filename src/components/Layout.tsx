@@ -571,9 +571,18 @@ export function Layout() {
               <Bell className="w-5 h-5" />
               <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-pink rounded-full"></span>
             </button>
-            <div className="flex items-center gap-2 pl-4 border-l border-border">
-              <div className="w-8 h-8 rounded-full bg-[#CD176D]/10 text-[#CD176D] flex items-center justify-center">
-                <User className="w-4 h-4" />
+            <div className="flex items-center gap-2.5 pl-[18px] border-l border-border">
+              <div className="w-9 h-9 rounded-full bg-[#CD176D]/10 text-[#CD176D] flex items-center justify-center overflow-hidden shrink-0 ring-1 ring-slate-200">
+                {profile?.photoUrl ? (
+                  <img
+                    src={profile.photoUrl}
+                    alt={`Foto de ${profile.name}`}
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <User className="w-[18px] h-[18px]" />
+                )}
               </div>
               <div className="hidden md:block text-left text-sm">
                 <p className="font-semibold text-text-primary leading-none">

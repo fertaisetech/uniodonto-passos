@@ -14,7 +14,9 @@ service firebase.storage {
     }
 
     function isPortalAdmin() {
-      return isSignedIn() && request.auth.token.email == "fertaisetech@gmail.com";
+      return isSignedIn()
+        && (request.auth.token.email == "fertaisetech@gmail.com"
+          || request.auth.token.email == "admin@uniodonto.com");
     }
 
     match /profile-photos/{uid}/{allPaths=**} {

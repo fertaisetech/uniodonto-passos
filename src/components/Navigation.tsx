@@ -131,7 +131,7 @@ export function Sidebar({ open, setOpen }: { open: boolean; setOpen: (open: bool
         <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
           {navigation.filter((item) => {
             const screenByPath: Record<string, ScreenKey> = { "/": "visaoGeral", "/dashboard": "dashboard", "/relatorios": "relatorios", "/envio-integracao": "envio", "/configuracoes": "configuracoes", "/comunicacoes": "comunicacoes", "/app-vendas": "appVendas", "/crm": "crm" };
-            return canAccessScreen(profile?.role, screenByPath[item.href]);
+            return canAccessScreen(profile?.role, screenByPath[item.href], profile?.screens);
           }).map((item) => {
             const isActive = location.pathname === item.href;
             const linkClass = clsx(
@@ -181,10 +181,14 @@ export function Sidebar({ open, setOpen }: { open: boolean; setOpen: (open: bool
             collapsed ? "p-1.5 justify-center" : "p-3 gap-2.5"
           )}>
             <div className={clsx(
-              "rounded-full bg-[#FF4B8B] text-white flex items-center justify-center font-extrabold border-2 border-white/20 shadow-md shrink-0 transition-all",
-              collapsed ? "w-8 h-8 text-xs" : "w-10 h-10 text-sm"
+              "rounded-full bg-[#FF4B8B] text-white flex items-center justify-center font-extrabold border-2 border-white/20 shadow-md shrink-0 transition-all overflow-hidden",
+              collapsed ? "w-9 h-9 text-xs" : "w-11 h-11 text-sm"
             )}>
-              {profile ? (profile.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase() || "OP") : "FT"}
+              {profile?.photoUrl ? (
+                <img src={profile.photoUrl} alt={`Foto de ${profile.name}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              ) : profile ? (
+                profile.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase() || "OP"
+              ) : "FT"}
             </div>
             {!collapsed && (
               <div className="min-w-0 flex-1">
@@ -452,7 +456,7 @@ export function BottomNav() {
 
   return (
     <div className="no-print md:hidden fixed bottom-0 left-0 right-0 glass-card !border-x-0 !border-b-0 !rounded-none flex justify-around items-center h-16 z-40 pb-safe shadow-lg">
-      {mobileNav.filter((item) => canAccessScreen(profile?.role, ({ "/": "visaoGeral", "/dashboard": "dashboard", "/relatorios": "relatorios", "/envio-integracao": "envio" } as Record<string, ScreenKey>)[item.href])).map((item) => {
+      {mobileNav.filter((item) => canAccessScreen(profile?.role, ({ "/": "visaoGeral", "/dashboard": "dashboard", "/relatorios": "relatorios", "/envio-integracao": "envio" } as Record<string, ScreenKey>)[item.href], profile?.screens)).map((item) => {
         const isActive = location.pathname === item.href;
         return (
           <Link

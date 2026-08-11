@@ -73,23 +73,13 @@ export function Relatorios() {
     setIsGenerating(true);
     setGenerationSuccess(false);
     try {
-      // Trigger live background API compilation / ingestion check
-      const res = await fetch("/api/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month: selectedMonth }),
-      });
-      if (!res.ok) {
-        console.warn("Sync endpoint returned a non-OK response; Firestore remains the source of truth.");
-      }
-    } catch (err) {
-      console.warn("Couldn't invoke live server sync endpoint", err);
+      // O relatório usa o mesmo documento mensal já carregado pelo Dashboard.
+      // A geração não deve reimportar fontes antigas nem alterar o banco.
+      await new Promise((resolve) => window.setTimeout(resolve, 450));
     } finally {
-      setTimeout(() => {
-        setIsGenerating(false);
-        setGenerationSuccess(true);
-        setTimeout(() => setGenerationSuccess(false), 4500);
-      }, 1200);
+      setIsGenerating(false);
+      setGenerationSuccess(true);
+      window.setTimeout(() => setGenerationSuccess(false), 4500);
     }
   };
 
@@ -102,7 +92,7 @@ export function Relatorios() {
       ["Beneficiários Totais", summary.beneficiaries.current, summary.beneficiaries.target || "N/A", `${summary.beneficiaries.variation}%`],
       ["Novas Inclusões", summary.additions.current, summary.additions.target || "N/A", `${summary.additions.variation}%`],
       ["Cancelamentos", summary.cancellations.current, summary.cancellations.target || "N/A", `${summary.cancellations.variation}%`],
-      ["ROI Estimado (%)", `${summary.roi.current}%`, "N/A", `${summary.roi.variation}%`],
+      ["ROI Estimado (%)", summary.roi.available === false ? "Indisponível" : `${summary.roi.current}%`, "N/A", summary.roi.available === false ? "N/A" : `${summary.roi.variation}%`],
       ["Leads Gerados", summary.leads.current, summary.leads.target || "N/A", `${summary.leads.variation}%`],
       ["Vendas Realizadas", summary.sales.current, summary.sales.target || "N/A", `${summary.sales.variation}%`],
     ];
@@ -238,6 +228,8 @@ export function Relatorios() {
     cac: summary.cac.current,
     contacts: funnelData?.find((stage) => stage.stage === "Contatos")?.count || 0,
   };
+  const roiAvailable = summary.roi.available !== false;
+  const npsAvailable = summary.nps.available !== false;
   const roiMultiplier = reportStats.roi / 100;
 
   // Build a beautiful hybrid chart dataset integrating Visão Geral goals & Funnel results
@@ -425,7 +417,7 @@ export function Relatorios() {
                   <div className="bg-slate-50/50 hover:bg-slate-50 transition-colors rounded-2xl p-4 border border-slate-100">
                     <span className="text-[10px] font-black tracking-wider text-slate-400 block uppercase">ROI (X)</span>
                     <span className="text-xl font-black text-slate-850 leading-none mt-2 block font-extrabold text-[#10B981]">
-                      {roiMultiplier.toFixed(1)}x
+                      {roiAvailable ? `${roiMultiplier.toFixed(1)}x` : "Indisponível"}
                     </span>
                     <span className="text-[10px] font-semibold text-slate-500 mt-1 block">Retorno invest.</span>
                   </div>
@@ -440,12 +432,12 @@ export function Relatorios() {
                       <p className="mt-1 text-[11px] font-semibold text-slate-500">Satisfação registrada no período selecionado.</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-2xl font-black text-emerald-700">{summary.nps.current.toLocaleString("pt-BR")}</p>
-                      <p className="text-[10px] font-bold text-emerald-700">NPS • {summary.nps.variation >= 0 ? "+" : ""}{summary.nps.variation}%</p>
+                      <p className="text-2xl font-black text-emerald-700">{npsAvailable ? summary.nps.current.toLocaleString("pt-BR") : "Indisponível"}</p>
+                      {npsAvailable && <p className="text-[10px] font-bold text-emerald-700">NPS • {summary.nps.variation >= 0 ? "+" : ""}{summary.nps.variation} pts</p>}
                     </div>
                   </div>
                   <div className="mt-4 h-2 overflow-hidden rounded-full bg-white">
-                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, summary.nps.current))}%` }} />
+                    <div className="h-full rounded-full bg-emerald-500" style={{ width: npsAvailable ? `${Math.min(100, Math.max(0, summary.nps.current))}%` : "0%" }} />
                   </div>
                 </div>
               )}
@@ -536,8 +528,8 @@ export function Relatorios() {
                   <span className="text-[#047857] font-black text-[11px] uppercase tracking-wider">Multiplicador ROI</span>
                   <span className="text-[#047857] bg-white border border-green-200 px-1.5 py-0.5 rounded-md text-[10px] font-extrabold">Ótimo</span>
                 </div>
-                <p className="text-[#0F172A] font-extrabold text-sm mt-1">{roiMultiplier.toFixed(1)}x Retorno</p>
-                <p className="text-[10px] text-slate-500 font-semibold mt-1">A cada R$ 1,00 investido nas mídias, o retorno estimado foi de {roiMultiplier.toFixed(2)}x em novas vendas integradas.</p>
+                <p className="text-[#0F172A] font-extrabold text-sm mt-1">{roiAvailable ? `${roiMultiplier.toFixed(1)}x Retorno` : "Retorno indisponível"}</p>
+                <p className="text-[10px] text-slate-500 font-semibold mt-1">{roiAvailable ? `A cada R$ 1,00 investido, o retorno atribuído ao período foi de ${roiMultiplier.toFixed(2)}x.` : "Informe a receita do período em Envio e Integração para calcular este indicador."}</p>
               </div>
 
               {/* CAC efficiency block */}

@@ -15,8 +15,16 @@ export function KPICard({ title, value, variation, target, icon: Icon, tooltip }
   const isPositive = variation > 0;
   const isNeutral = variation === 0;
 
-  const currentVal = typeof value === "number" ? value : parseFloat(String(value).replace(/[^0-9.-]+/g, ""));
-  const percentTarget = target ? Math.min(100, Math.max(0, (currentVal / target) * 100)) : 0;
+  const parsedCurrentValue =
+    typeof value === "number"
+      ? value
+      : Number.parseFloat(String(value).replace(/[^0-9.-]+/g, ""));
+  const valueIsNumeric = Number.isFinite(parsedCurrentValue);
+  const currentVal = valueIsNumeric ? parsedCurrentValue : 0;
+  const percentTarget =
+    target && valueIsNumeric
+      ? Math.min(100, Math.max(0, (currentVal / target) * 100))
+      : 0;
 
   return (
     <div className="glass-card shadow-sm p-3 sm:p-3.5 flex flex-col hover:shadow-md transition-shadow relative group">
@@ -44,7 +52,7 @@ export function KPICard({ title, value, variation, target, icon: Icon, tooltip }
           <span className="text-[10px] sm:text-xs text-text-secondary">vs. mês ant.</span>
         </div>
         
-        {target !== undefined && (
+        {target !== undefined && valueIsNumeric && (
           <div className="w-full">
             <div className="flex justify-between text-[9px] text-text-secondary mb-0.5">
               <span>Progresso</span>

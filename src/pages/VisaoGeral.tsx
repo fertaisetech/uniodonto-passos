@@ -49,6 +49,12 @@ export function VisaoGeral() {
     npsData,
     cancellationReasons,
   } = dashboardData;
+  const operationalAvailable =
+    dashboardData.dataQuality?.operationalStatus === "actual" ||
+    dashboardData.dataQuality?.operationalStatus === "partial";
+  const marketingAvailable =
+    dashboardData.dataQuality?.marketingStatus === "actual" ||
+    dashboardData.dataQuality?.marketingStatus === "review";
   const evolutionInvalid = beneficiariesData.evolution.some((item) => !Number.isFinite(Number(item.count)));
   const funnelInvalid = funnelData.some((item) => !Number.isFinite(Number(item.count)));
   const npsInvalid = npsData.some((item) => !Number.isFinite(Number(item.score)));
@@ -92,14 +98,14 @@ export function VisaoGeral() {
         />
         <KPICard
           title="Novas Inclusões"
-          value={summary.additions.current}
+          value={operationalAvailable ? summary.additions.current : "Indisponível"}
           variation={summary.additions.variation}
           target={summary.additions.target}
           icon={Zap}
         />
         <KPICard
           title="Cancelamentos"
-          value={summary.cancellations.current}
+          value={operationalAvailable ? summary.cancellations.current : "Indisponível"}
           variation={summary.cancellations.variation}
           target={summary.cancellations.target}
           icon={ShieldClose}
@@ -112,7 +118,7 @@ export function VisaoGeral() {
         />
         <KPICard
           title="ROI Estimado (%)"
-          value={summary.roi.current}
+          value={summary.roi.available === false ? "Indisponível" : summary.roi.current}
           variation={summary.roi.variation}
           icon={Target}
           tooltip="Retorno sobre Investimento"
@@ -120,35 +126,35 @@ export function VisaoGeral() {
 
         <KPICard
           title="Leads Gerados"
-          value={summary.leads.current}
+          value={marketingAvailable ? summary.leads.current : "Indisponível"}
           variation={summary.leads.variation}
           target={summary.leads.target}
           icon={BarChart}
         />
         <KPICard
           title="Agendamentos"
-          value={summary.appointments.current}
+          value={summary.appointments.available === false ? "Indisponível" : summary.appointments.current}
           variation={summary.appointments.variation}
           target={summary.appointments.target}
           icon={Phone}
         />
         <KPICard
           title="Vendas Realizadas"
-          value={summary.sales.current}
+          value={operationalAvailable ? summary.sales.current : "Indisponível"}
           variation={summary.sales.variation}
           target={summary.sales.target}
           icon={UserCheck}
         />
         <KPICard
           title="CAC (R$)"
-          value={formatCurrency(summary.cac.current)}
+          value={summary.cac.available === false ? "Indisponível" : formatCurrency(summary.cac.current)}
           variation={summary.cac.variation}
           icon={DollarSign}
           tooltip="Custo de Aquisição de Cliente"
         />
         <KPICard
           title="NPS"
-          value={summary.nps.current}
+          value={summary.nps.available === false ? "Indisponível" : summary.nps.current}
           variation={summary.nps.variation}
           icon={Star}
           tooltip="Net Promoter Score"
@@ -195,7 +201,7 @@ export function VisaoGeral() {
           <div className="h-[220px] sm:h-[270px] w-full">
             <SafeChartContainer height={220} empty={evolutionData.length === 0} invalid={evolutionInvalid}>
               <AreaChart
-                data={beneficiariesData?.evolution}
+                data={evolutionData}
                 margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
               >
                 <defs>

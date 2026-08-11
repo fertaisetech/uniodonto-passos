@@ -50,6 +50,7 @@ export interface Member {
   isPhoto?: boolean;
   photoUrl?: string;
   localPhotoUrl?: string;
+  accessPassword?: string;
   screens?: {
     dashboard?: boolean;
     relatorios?: boolean;
@@ -61,66 +62,12 @@ export interface Member {
   };
 }
 
-const defaultMembers: Member[] = [
-  {
-    id: "1",
-    name: "Fertize Tech",
-    email: "fertaisetech@gmail.com",
-    role: "Tech FerTaise",
-    status: "ATIVO",
-    initials: "FT",
-    avatarBgColor: "bg-[#A60069]",
-  },
-  {
-    id: "2",
-    name: "Dr. Elcio Beraldo",
-    email: "el***@uniodonto.com",
-    role: "Diretor",
-    status: "ATIVO",
-    initials: "EB",
-    avatarBgColor: "bg-gray-400",
-  },
-  {
-    id: "3",
-    name: "Dr. Luiz Fernando",
-    email: "lu**@uniodonto.com",
-    role: "Diretor",
-    status: "ATIVO",
-    initials: "LF",
-    avatarBgColor: "bg-gray-400",
-  },
-  {
-    id: "4",
-    name: "Dr. Mateus José",
-    email: "ma****@uniodonto.com",
-    role: "Diretor",
-    status: "ATIVO",
-    initials: "MJ",
-    avatarBgColor: "bg-gray-400",
-  },
-  {
-    id: "5",
-    name: "Janaína Pádua",
-    email: "ge*****@uniodonto.com",
-    role: "Gerente",
-    status: "ATIVO",
-    initials: "JP",
-    avatarBgColor: "bg-gray-400",
-  },
-  {
-    id: "6",
-    name: "test 1234",
-    email: "te**@uniodontopassos.com",
-    role: "Gerente",
-    status: "ATIVO",
-    initials: "T1",
-    avatarBgColor: "bg-[#0088CC]",
-  }
-];
+const defaultMembers: Member[] = [];
 
 export function Configuracoes() {
   const { profile } = useAppSession();
-  const canManageUsers = profile?.email?.toLowerCase() === "fertaisetech@gmail.com";
+  const canManageUsers = profile?.role === "Administrador"
+    || profile?.email?.toLowerCase() === "fertaisetech@gmail.com";
   const [activeTab, setActiveTab] = useState<
     "perfil" | "usuarios" | "telas" | "cooperativa" | "seguranca" | "alertas"
   >("usuarios");
@@ -136,13 +83,12 @@ export function Configuracoes() {
   const roles = ["Diretor", "Gerente", "Recepção", "Vendedoras", "Tech FerTaise"];
 
   useEffect(() => {
-    if (!canManageUsers) return;
     void loadRoleScreens().then((remote) => {
       if (!remote || Object.keys(remote).length === 0) return;
       setRoleScreens(remote);
       localStorage.setItem("uniodonto-role-screens", JSON.stringify(remote));
     });
-  }, [canManageUsers]);
+  }, []);
 
   // State for Users Management
   const [searchQuery, setSearchQuery] = useState("");
@@ -157,7 +103,7 @@ export function Configuracoes() {
   const [formStatus, setFormStatus] = useState<"ATIVO" | "INATIVO">("ATIVO");
   const [formUsername, setFormUsername] = useState("");
   const [formPassword, setFormPassword] = useState("");
-  const [showFormPassword, setShowFormPassword] = useState(false);
+  const [showMemberPassword, setShowMemberPassword] = useState(true);
   const [formPhoto, setFormPhoto] = useState<string | null>(null);
   const [formPhotoFile, setFormPhotoFile] = useState<File | null>(null);
   const [formScreens, setFormScreens] = useState({
@@ -183,23 +129,7 @@ export function Configuracoes() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
   const mergeMembersWithDefaults = (remoteMembers: Member[]) => {
-    const byId = new Map(defaultMembers.map((member) => [member.id, member]));
-    for (const member of remoteMembers) {
-      if (member.id === "1" || member.email.toLowerCase() === "fernando.daraujo10@gmail.com") {
-        byId.set("1", {
-          ...member,
-          id: "1",
-          name: "Fertize Tech",
-          email: "fertaisetech@gmail.com",
-          role: "Tech FerTaise",
-          status: "ATIVO",
-          initials: "FT",
-        });
-      } else {
-        byId.set(member.id, member);
-      }
-    }
-    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+    return [...remoteMembers].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   };
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
@@ -216,10 +146,8 @@ export function Configuracoes() {
   const [profileName, setProfileName] = useState(profile?.name || "Admin Uniodonto");
   const [profileEmail, setProfileEmail] = useState(profile?.email || "contato@uniodontopassos.com");
   const [profilePhone, setProfilePhone] = useState(profile?.phone || "(35) 99888-7766");
-  const [profilePassword, setProfilePassword] = useState("********");
   const [profilePhotoPreview, setProfilePhotoPreview] = useState<string | null>(profile?.localPhotoUrl || profile?.photoUrl || null);
   const [profilePhotoFile, setProfilePhotoFile] = useState<File | null>(null);
-  const [showPassword, setShowPassword] = useState(false);
   const [isProfileSaved, setIsProfileSaved] = useState(false);
 
   // Cooperativa Form States
@@ -260,9 +188,10 @@ export function Configuracoes() {
         if (!alive) return;
         setMembers(mergeMembersWithDefaults(remoteMembers));
       },
-      () => {
+      (error) => {
         if (!alive) return;
         setMembers(defaultMembers);
+        showToast(`Falha ao carregar usuários: ${error.message}`, "error");
       }
     );
 
@@ -271,9 +200,10 @@ export function Configuracoes() {
         if (!alive) return;
         setMembers(mergeMembersWithDefaults(remoteMembers));
       })
-      .catch(() => {
+      .catch((error) => {
         if (!alive) return;
         setMembers(defaultMembers);
+        showToast(`Falha ao carregar usuários: ${error instanceof Error ? error.message : "erro desconhecido"}`, "error");
       });
 
     return () => {
@@ -327,20 +257,9 @@ export function Configuracoes() {
     setEditingMember(member);
     setFormName(member.name);
     
-    // Get full emails instead of masked ones for editable states
-    let fullEmail = member.email;
-    if (member.email.includes("***")) {
-      if (member.id === "1") fullEmail = "fertaisetech@gmail.com";
-      else if (member.id === "2") fullEmail = "elcio@uniodonto.com";
-      else if (member.id === "3") fullEmail = "luiz@uniodonto.com";
-      else if (member.id === "4") fullEmail = "mateus@uniodonto.com";
-      else if (member.id === "5") fullEmail = "janaina@uniodonto.com";
-      else fullEmail = "user@uniodonto.com";
-    }
-    
-    setFormEmail(fullEmail);
-    setFormUsername(fullEmail);
-    setFormPassword("");
+    setFormEmail(member.email);
+    setFormUsername(member.email);
+    setFormPassword(member.accessPassword || "");
     setFormPhotoFile(null);
     setFormRole(member.role);
     setFormStatus(member.status);
@@ -406,6 +325,7 @@ export function Configuracoes() {
           isPhoto: !!photoUrl,
           photoUrl,
           localPhotoUrl: formPhoto?.startsWith("data:") ? formPhoto : editingMember?.localPhotoUrl,
+          accessPassword: formPassword,
           screens: formScreens,
         };
 
@@ -415,7 +335,12 @@ export function Configuracoes() {
           return [...withoutCurrent, nextMember].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
         });
         setIsModalOpen(false);
-        showToast(editingMember ? "Usuário editado com sucesso!" : "Usuário adicionado com sucesso!", "success");
+        showToast(
+          editingMember
+            ? "Usuário atualizado e publicado no Firebase!"
+            : "Usuário salvo e publicado no Firebase!",
+          "success"
+        );
       } catch (err) {
         showToast("Erro ao salvar, tente novamente", "error");
       }
@@ -986,7 +911,7 @@ export function Configuracoes() {
                   }
 
                   if (profile?.uid) {
-                    await saveUserProfile({
+                    const updatedProfile = {
                       uid: profile.uid,
                       email: profileEmail,
                       name: profileName,
@@ -995,12 +920,25 @@ export function Configuracoes() {
                       photoUrl,
                       localPhotoUrl: profilePhotoPreview?.startsWith("data:") ? profilePhotoPreview : profile?.localPhotoUrl,
                       updatedAt: new Date().toISOString(),
-                    });
+                    };
+                    await saveUserProfile(updatedProfile);
+
+                    const currentMember = members.find((member) => member.id === profile.uid);
+                    if (currentMember && canManageUsers) {
+                      await saveTeamMember({
+                        ...currentMember,
+                        email: profileEmail,
+                        name: profileName,
+                        photoUrl,
+                        isPhoto: !!photoUrl,
+                      });
+                    }
                   }
 
                   setProfilePhotoPreview(photoUrl || null);
                   setProfilePhotoFile(null);
                   setIsProfileSaved(true);
+                  showToast("Perfil atualizado e publicado no Firebase!", "success");
                   setTimeout(() => setIsProfileSaved(false), 3000);
                 } catch (error) {
                   showToast("Não foi possível salvar o perfil agora.", "error");
@@ -1080,23 +1018,15 @@ export function Configuracoes() {
 
                   <div>
                     <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                      Senha de backup
+                      Senha da conta
                     </label>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? "text" : "password"}
-                        className="w-full px-4 py-2 text-xs border border-slate-200 rounded-xl outline-none focus:border-[#A60069] font-semibold text-slate-800 pr-10"
-                        value={profilePassword}
-                        onChange={(e) => setProfilePassword(e.target.value)}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#A60069] transition-colors"
-                      >
-                        {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
+                    <input
+                      type="text"
+                      readOnly
+                      value={members.find((member) => member.email.toLowerCase() === profileEmail.toLowerCase())?.accessPassword || ""}
+                      placeholder="Definida no gerenciamento de usuários"
+                      className="w-full px-4 py-2 text-xs border border-slate-200 rounded-xl font-semibold text-slate-800 bg-slate-50"
+                    />
                   </div>
                 </div>
 
@@ -1557,27 +1487,29 @@ export function Configuracoes() {
                 />
               </div>
 
-              {/* 5. SENHA */}
+              {/* 5. SENHA DE ACESSO */}
               <div>
                 <label className="block text-[10px] font-extrabold text-[#64748B] uppercase tracking-wider mb-1.5">
                   Senha
                 </label>
                 <div className="relative">
                   <input
-                    type={showFormPassword ? "text" : "password"}
-                    className="w-full pl-4 pr-11 py-3 text-xs font-semibold text-slate-800 border border-slate-200 focus:border-[#CD176D] focus:ring-2 focus:ring-[#CD176D]/10 rounded-2xl outline-none transition-all placeholder:text-slate-400"
-                    placeholder="Deixe em branco para manter a senha atual"
+                    type={showMemberPassword ? "text" : "password"}
                     value={formPassword}
                     onChange={(e) => setFormPassword(e.target.value)}
+                    placeholder="Senha do usuário"
+                    className="w-full px-4 py-3 pr-11 text-xs font-semibold text-slate-800 border border-slate-200 focus:border-[#CD176D] focus:ring-2 focus:ring-[#CD176D]/10 rounded-2xl outline-none transition-all"
                   />
                   <button
                     type="button"
-                    onClick={() => setShowFormPassword(!showFormPassword)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#CD176D] transition-colors cursor-pointer p-0.5"
+                    onClick={() => setShowMemberPassword((value) => !value)}
+                    className="absolute inset-y-0 right-0 px-4 text-slate-400 hover:text-[#CD176D]"
+                    aria-label={showMemberPassword ? "Ocultar senha" : "Mostrar senha"}
                   >
-                    {showFormPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showMemberPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
+                <p className="mt-1.5 text-[9px] font-semibold text-slate-400">Senha operacional exibida somente no gerenciamento de usuários.</p>
               </div>
 
               {/* 6. STATUS DA CONTA */}

@@ -1,4 +1,5 @@
 import {
+  collection,
   doc,
   getDoc,
   onSnapshot,
@@ -10,6 +11,20 @@ import { auth, db, type AppUserProfile } from "./firebase";
 import { getMonthlyInvestmentValues } from "./investmentMonthlyData";
 import { getOfficialMetaAdsCampaigns } from "./metaAdsMonthlyData";
 import type { MonthlyOperationalData } from "./operationalSpreadsheet";
+import {
+  OFFICIAL_CITIES,
+  OFFICIAL_DASHBOARD_SOURCE_VERSION,
+  OFFICIAL_INVESTMENTS_2026,
+  OFFICIAL_META_2026,
+  OFFICIAL_MONTHS_2026,
+  OFFICIAL_OPERATIONAL_2026,
+  getOfficialBeneficiaries,
+  getOfficialBeneficiaryEvolution,
+  getOfficialMonthIndex,
+  getOfficialStatuses,
+  type OfficialDataStatus,
+  type OfficialMonth2026,
+} from "./officialDashboard2026Data";
 
 export type MonthKey = string;
 
@@ -18,6 +33,7 @@ export interface SummaryMetric {
   previous: number;
   variation: number;
   target?: number;
+  available?: boolean;
 }
 
 export interface SummaryData {
@@ -52,6 +68,43 @@ export interface NpsDataPoint {
   date: string;
   score: number;
 }
+
+export interface FinancialData {
+  /** Receita ou retorno financeiro atribuído ao período. */
+  revenue: number | null;
+}
+
+export interface NpsSurveyData {
+  promoters: number | null;
+  passives: number | null;
+  detractors: number | null;
+}
+
+export const calculateRoiPercent = (
+  revenue: number | null | undefined,
+  investment: number | null | undefined,
+) => {
+  if (revenue === null || revenue === undefined || investment === null || investment === undefined) {
+    return null;
+  }
+  const safeRevenue = Number(revenue);
+  const safeInvestment = Number(investment);
+  if (!Number.isFinite(safeRevenue) || safeRevenue < 0 || !Number.isFinite(safeInvestment) || safeInvestment <= 0) {
+    return null;
+  }
+  return Number(((safeRevenue / safeInvestment) * 100).toFixed(2));
+};
+
+export const calculateNpsScore = (survey: NpsSurveyData | null | undefined) => {
+  const rawValues = [survey?.promoters, survey?.passives, survey?.detractors];
+  if (rawValues.some((value) => value === null || value === undefined)) return null;
+  const values = rawValues.map(Number);
+  if (values.some((value) => !Number.isFinite(value) || value < 0)) return null;
+  const [promoters, passives, detractors] = values;
+  const total = promoters + passives + detractors;
+  if (total <= 0) return null;
+  return Number((((promoters - detractors) / total) * 100).toFixed(1));
+};
 
 export interface InvestmentItem {
   id: string;
@@ -185,14 +238,10 @@ export const calculateMetaAdsMetrics = (
     ctr: ratio(linkClicks, impressions),
     cpc: valid(investment) && valid(linkClicks) && linkClicks > 0 ? investment / linkClicks : null,
     cpm: valid(investment) && valid(impressions) && impressions > 0 ? (investment / impressions) * 1000 : null,
-    // A planilha não traz visualizações de página. Nesse caso, usamos
-    // impressões como proxy explícito para o custo por visualização.
     costPerView:
       valid(investment) && valid(pageViews) && pageViews > 0
         ? investment / pageViews
-        : valid(investment) && valid(impressions) && impressions > 0
-          ? investment / impressions
-          : null,
+        : null,
     clickToPageRate: ratio(pageViews, linkClicks),
   };
 };
@@ -204,18 +253,24 @@ export interface MonthlyDashboardDocument {
   beneficiariesData: BeneficiariesData;
   funnelData: FunnelDataPoint[];
   npsData: NpsDataPoint[];
+  financialData?: FinancialData;
+  npsSurvey?: NpsSurveyData;
   investments: InvestmentItem[];
   metrics: MetricItem[];
   metaAdsCampaigns?: MetaAdsCampaign[];
   operationalData?: MonthlyOperationalData;
+  dataQuality?: {
+    source: string;
+    sourceVersion: string;
+    operationalStatus: OfficialDataStatus;
+    marketingStatus: OfficialDataStatus;
+    investmentStatus: OfficialDataStatus;
+    netNewSales?: number;
+    warnings: string[];
+    assumptions: string[];
+  };
   cancellationReasons: Array<{
-    reason:
-      | "CPF/CNPJ retornando"
-      | "Cancelamento"
-      | "Demissão"
-      | "Pediu as contas"
-      | "Mudança"
-      | "Outros";
+    reason: string;
     count: number;
   }>;
   updatedAt?: unknown;
@@ -455,130 +510,160 @@ export const calculateInvestmentTotal = (investments: InvestmentItem[]) =>
       .toFixed(2),
   );
 
-const makeMetric = (
+const metricVariation = (current: number, previous: number) =>
+  previous === 0 ? 0 : Number((((current - previous) / previous) * 100).toFixed(1));
+
+const makeOfficialMetric = (
   current: number,
-  previousFactor = 0.95,
-  targetFactor = 1.1,
-): SummaryMetric => {
-  const previous =
-    current === 0 ? 0 : Number((current * previousFactor).toFixed(2));
-  const target =
-    current === 0 ? 0 : Number((current * targetFactor).toFixed(2));
-  const variation =
-    previous === 0
-      ? 0
-      : Number((((current - previous) / previous) * 100).toFixed(1));
-  return { current, previous, variation, target };
+  previous: number,
+  available = true,
+  target?: number,
+): SummaryMetric => ({
+  current: Number.isFinite(current) ? current : 0,
+  previous: Number.isFinite(previous) ? previous : 0,
+  variation: available ? metricVariation(current, previous) : 0,
+  available,
+  ...(target === undefined ? {} : { target }),
+});
+
+const officialOperationalData = (month: MonthKey): MonthlyOperationalData | undefined => {
+  const input = OFFICIAL_OPERATIONAL_2026[month as OfficialMonth2026];
+  const monthIndex = getOfficialMonthIndex(month);
+  if (!input || monthIndex < 0) return undefined;
+  return {
+    competence: `2026-${String(monthIndex + 1).padStart(2, "0")}`,
+    year: 2026,
+    month: monthIndex + 1,
+    status: input.status === "partial" ? "partial" : "complete",
+    entries: input.entries,
+    cancellations: input.cancellations,
+    balance: input.entries - input.cancellations,
+    entriesByCity: OFFICIAL_CITIES.map((city) => ({
+      cityKey: city.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, "-"),
+      cityOriginal: city,
+      cityName: city,
+      entries: input.entriesByCity[city] || 0,
+      cancellations: input.cancellationsByCity[city] || 0,
+      partial: input.status === "partial",
+    })),
+    cancellationReasons: Object.entries(input.cancellationReasons).map(([reason, quantity]) => ({
+      reasonOriginal: reason,
+      reasonNormalized: reason.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(),
+      quantity,
+    })),
+    warnings: [],
+    source: {
+      fileName: "BASE-DADOS-DASHBOARD-UNIODONTO-2026.xlsx",
+      importedAt: "2026-08-11T00:00:00.000Z",
+    },
+  };
 };
 
-const buildMonthlyDocument = (month: MonthKey): MonthlyDashboardDocument => {
-  const monthNames = [
-    "Janeiro",
-    "Fevereiro",
-    "Março",
-    "Abril",
-    "Maio",
-    "Junho",
-    "Julho",
-    "Agosto",
-    "Setembro",
-    "Outubro",
-    "Novembro",
-    "Dezembro",
-  ];
-  const [monthName, yearText] = month.split("/");
-  const monthIndex = monthNames.indexOf(monthName);
-  const year = Number(yearText) || 2026;
-  const baseMonthIndex = 4;
-  const monthDistance =
-    monthIndex < 0 ? 0 : (year - 2026) * 12 + monthIndex - baseMonthIndex;
-  const variationFactor = Number(Math.pow(1.05, monthDistance).toFixed(6));
-  // New months start with the previous period's baseline so the integration
-  // screen never opens empty when a new month begins. Users can then adjust
-  // and save the real values for that month.
-  const scale = (value: number) => Number((value * variationFactor).toFixed(2));
+const buildMonthlyDocument = (requestedMonth: MonthKey): MonthlyDashboardDocument => {
+  const month = requestedMonth === "Todos" ? "Junho/2026" : requestedMonth;
+  const index = Math.max(0, getOfficialMonthIndex(month));
+  const previousMonth = OFFICIAL_MONTHS_2026[Math.max(0, index - 1)];
+  const operational = OFFICIAL_OPERATIONAL_2026[month as OfficialMonth2026];
+  const previousOperational = OFFICIAL_OPERATIONAL_2026[previousMonth];
+  const meta = OFFICIAL_META_2026[month as OfficialMonth2026];
+  const previousMeta = OFFICIAL_META_2026[previousMonth];
+  const statuses = getOfficialStatuses(month);
   const monthlyInvestmentValues = getMonthlyInvestmentValues(month);
-  const investmentItems = baseInvestments.map((item) => ({
-    ...item,
+  const investmentItems: InvestmentItem[] = OFFICIAL_INVESTMENTS_2026.map((item) => ({
+    id: item.id,
+    checked: true,
+    source: item.source,
+    category: item.category,
+    isFixed: false,
     value: monthlyInvestmentValues[item.id] ?? 0,
   }));
-  const metricItems = baseMetrics.map((item) => {
-    const numericValue = Number(
-      item.value.replace(/[^0-9,-]/g, "").replace(",", "."),
-    );
-    if (!Number.isFinite(numericValue)) return { ...item, value: item.value };
-    const scaledValue = scale(numericValue).toLocaleString("pt-BR", {
-      maximumFractionDigits: 2,
-    });
-    return { ...item, value: scaledValue };
-  });
   const investmentTotal = calculateInvestmentTotal(investmentItems);
-  const salesCurrent = scale(86);
-  const cacCurrent = Number((investmentTotal / salesCurrent).toFixed(2));
+  const previousInvestmentTotal = calculateInvestmentTotal(
+    OFFICIAL_INVESTMENTS_2026.map((item) => ({
+      id: item.id,
+      checked: true,
+      source: item.source,
+      category: item.category,
+      isFixed: false,
+      value: item.values[Math.max(0, index - 1)] ?? 0,
+    })),
+  );
+  const beneficiaries = getOfficialBeneficiaries(month);
+  const previousBeneficiaries = index === 0 ? 10289 : getOfficialBeneficiaries(previousMonth);
+  const netNew = operational?.netNew || 0;
+  const previousNetNew = previousOperational?.netNew || 0;
+  const cac = netNew > 0 ? Number((investmentTotal / netNew).toFixed(2)) : 0;
+  const previousCac = previousNetNew > 0 ? Number((previousInvestmentTotal / previousNetNew).toFixed(2)) : 0;
+  const operationAvailable = Boolean(operational);
+  const marketingAvailable = Boolean(meta);
   const summary: SummaryData = {
-    beneficiaries: makeMetric(scale(10289), 1.0, 1.05),
-    additions: makeMetric(scale(42), 1.0, 1.1),
-    cancellations: makeMetric(scale(18), 1.0, 1.0),
-    investment: makeMetric(investmentTotal, 0.98, 1.1),
-    roi: makeMetric(scale(819.69), 0.9, 1.15),
-    leads: makeMetric(scale(420), 0.94, 1.1),
-    appointments: makeMetric(scale(108), 0.92, 1.08),
-    sales: makeMetric(salesCurrent, 0.93, 1.12),
-    cac: makeMetric(cacCurrent, 0.91, 0.95),
-    nps: makeMetric(scale(80), 0.95, 1.05),
+    beneficiaries: makeOfficialMetric(beneficiaries, previousBeneficiaries, operationAvailable || index > 0),
+    additions: makeOfficialMetric(operational?.entries || 0, previousOperational?.entries || 0, operationAvailable),
+    cancellations: makeOfficialMetric(operational?.cancellations || 0, previousOperational?.cancellations || 0, operationAvailable),
+    investment: makeOfficialMetric(investmentTotal, previousInvestmentTotal, true, investmentTotal),
+    roi: makeOfficialMetric(0, 0, false),
+    leads: makeOfficialMetric(meta?.leads || 0, previousMeta?.leads || 0, marketingAvailable),
+    appointments: makeOfficialMetric(0, 0, false),
+    sales: makeOfficialMetric(netNew, previousNetNew, operationAvailable),
+    cac: makeOfficialMetric(cac, previousCac, operationAvailable),
+    nps: makeOfficialMetric(0, 0, false),
   };
-  const cancellationReasons = [
-    { reason: "CPF/CNPJ retornando" as const, count: scale(3) },
-    { reason: "Cancelamento" as const, count: scale(4) },
-    { reason: "Demissão" as const, count: scale(3) },
-    { reason: "Pediu as contas" as const, count: scale(2) },
-    { reason: "Mudança" as const, count: scale(2) },
-    { reason: "Outros" as const, count: scale(1) },
+  const metricValue = (value: number | undefined) =>
+    value === undefined ? "" : value.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+  const metrics: MetricItem[] = [
+    { id: "impr", checked: marketingAvailable, label: "Impressões", category: "Meta Ads", value: metricValue(meta?.impressions), unit: "imp." },
+    { id: "clic", checked: marketingAvailable, label: "Cliques", category: "Meta Ads", value: metricValue(meta?.linkClicks), unit: "cliques" },
+    { id: "ctr", checked: marketingAvailable, label: "CTR", category: "Meta Ads", value: metricValue(meta ? (meta.linkClicks / meta.impressions) * 100 : undefined), unit: "%" },
+    { id: "cpc", checked: marketingAvailable, label: "CPC", category: "Meta Ads", value: metricValue(meta ? meta.investment / meta.linkClicks : undefined), unit: "R$" },
+    { id: "leads_canal", checked: marketingAvailable, label: "Leads por Canal", category: "Meta Ads", value: metricValue(meta?.leads), unit: "leads" },
+    { id: "conv_canal", checked: operationAvailable, label: "Novas aquisições", category: "Operacional", value: metricValue(operational?.netNew), unit: "benef." },
+    { id: "agend", checked: false, label: "Agendamentos", category: "Indisponível", value: "", unit: "" },
+    { id: "vendas_canal", checked: operationAvailable, label: "Entradas", category: "Operacional", value: metricValue(operational?.entries), unit: "benef." },
   ];
-
-  const beneficiariesData: BeneficiariesData = {
-    evolution: [
-      { date: "2026-01", count: 10000 },
-      { date: "2026-02", count: 10140 },
-      { date: "2026-03", count: 10210 },
-      { date: "2026-04", count: 10260 },
-      { date: "2026-05", count: 10289 },
-      { date: "2026-06", count: summary.beneficiaries.current },
-    ],
-    distribution: [
-      { plan: "Passos", count: scale(4200) },
-      { plan: "Itaú de Minas", count: scale(3889) },
-      { plan: "S.S. Paraíso", count: scale(2200) },
-      { plan: "Cássia", count: scale(1070) },
-    ],
-  };
-
-  const funnelData: FunnelDataPoint[] = [
-    { stage: "Leads", count: summary.leads.current },
-    { stage: "Contatos", count: scale(300) },
-    { stage: "Agendamentos", count: summary.appointments.current },
-    { stage: "Vendas", count: summary.sales.current },
-  ];
-
-  const npsData: NpsDataPoint[] = [
-    { date: "2026-01", score: 72 },
-    { date: "2026-02", score: 74 },
-    { date: "2026-03", score: 76 },
-    { date: "2026-04", score: 78 },
-    { date: "2026-05", score: 79 },
-    { date: "2026-06", score: summary.nps.current },
+  const operationDocument = officialOperationalData(month);
+  const warnings = [
+    ...(statuses.marketing === "review" ? ["Os dados de Meta Ads desta competência exigem revisão."] : []),
+    ...(statuses.operational === "not_sent" ? ["Os dados operacionais desta competência não foram enviados."] : []),
+    ...(statuses.marketing === "not_sent" ? ["Os dados de marketing desta competência não foram enviados."] : []),
+    ...(statuses.investment === "projected" ? ["Os investimentos desta competência são projeções recorrentes."] : []),
+    "ROI, NPS e agendamentos permanecem indisponíveis por ausência de base confirmada.",
   ];
 
   return {
-    month,
+    month: requestedMonth,
+    dataVersion: OFFICIAL_DASHBOARD_SOURCE_VERSION,
     summary,
-    beneficiariesData,
-    funnelData,
-    npsData,
+    beneficiariesData: {
+      evolution: getOfficialBeneficiaryEvolution()
+        .filter((item, itemIndex) => itemIndex <= Math.min(index, 5))
+        .map((item, itemIndex) => ({ date: `2026-${String(itemIndex + 1).padStart(2, "0")}`, count: item.ending })),
+      distribution: OFFICIAL_CITIES.map((city) => ({ plan: city, count: operational?.entriesByCity[city] || 0 })),
+      cityMovement: operationDocument?.entriesByCity.map((city) => ({ city: city.cityName, entries: city.entries, cancellations: city.cancellations })),
+    },
+    funnelData: [
+      { stage: "Leads", count: meta?.leads || 0 },
+      { stage: "Contatos", count: 0 },
+      { stage: "Agendamentos", count: 0 },
+      { stage: "Vendas", count: netNew },
+    ],
+    npsData: [],
+    financialData: { revenue: null },
+    npsSurvey: { promoters: null, passives: null, detractors: null },
     investments: investmentItems,
-    metrics: metricItems,
+    metrics,
     metaAdsCampaigns: getOfficialMetaAdsCampaigns(month),
-    cancellationReasons,
+    operationalData: operationDocument,
+    cancellationReasons: Object.entries(operational?.cancellationReasons || {}).map(([reason, count]) => ({ reason, count })),
+    dataQuality: {
+      source: "BASE-DADOS-DASHBOARD-UNIODONTO-2026.xlsx",
+      sourceVersion: OFFICIAL_DASHBOARD_SOURCE_VERSION,
+      operationalStatus: statuses.operational,
+      marketingStatus: statuses.marketing,
+      investmentStatus: statuses.investment,
+      netNewSales: operational?.netNew,
+      warnings,
+      assumptions: ["Total de beneficiários de janeiro de 2026 fixado em 10.289; a evolução acumulada começa em fevereiro."],
+    },
   };
 };
 
@@ -592,39 +677,54 @@ const normalizeDocument = (
   data: DocumentData | undefined | null,
 ): MonthlyDashboardDocument => {
   const fallback = buildMonthlyDocument(month);
-  if (!data) return fallback;
+  if (!data || data.dataVersion !== OFFICIAL_DATA_VERSION) return fallback;
 
   const rawBeneficiaries = data.beneficiariesData ?? fallback.beneficiariesData;
-  const cityNames = ["Passos", "Itaú de Minas", "S.S. Paraíso", "Cássia"];
+  const rawDistribution = Array.isArray(rawBeneficiaries.distribution)
+    ? rawBeneficiaries.distribution
+    : fallback.beneficiariesData.distribution;
   const normalizedBeneficiaries = {
     ...fallback.beneficiariesData,
     ...rawBeneficiaries,
-    distribution: (Array.isArray(rawBeneficiaries.distribution)
-      ? rawBeneficiaries.distribution
-      : fallback.beneficiariesData.distribution
-    )
-      .slice(0, cityNames.length)
-      .map((item: { count?: number }, index: number) => ({
-        plan: cityNames[index],
-        count: Number(item.count) || 0,
-      })),
+    distribution: OFFICIAL_CITIES.map((city, index) => {
+      const matching = rawDistribution.find((item: { plan?: string }) => item.plan === city);
+      return { plan: city, count: Number(matching?.count ?? rawDistribution[index]?.count) || 0 };
+    }),
   };
+  const normalizedSummary = Object.fromEntries(
+    (Object.keys(fallback.summary) as Array<keyof SummaryData>).map((key) => [
+      key,
+      {
+        ...fallback.summary[key],
+        ...(data.summary?.[key] ?? {}),
+      },
+    ]),
+  ) as unknown as SummaryData;
 
   return {
     ...fallback,
     ...data,
     month,
-    dataVersion: data.dataVersion ?? OFFICIAL_DATA_VERSION,
-    summary: data.summary ?? fallback.summary,
+    dataVersion: OFFICIAL_DATA_VERSION,
+    // Merge each metric with the canonical definition. Besides supporting
+    // older records, this restores semantic flags such as `available: false`
+    // that must not be interpreted as a measured zero.
+    summary: normalizedSummary,
     beneficiariesData: normalizedBeneficiaries,
     funnelData: data.funnelData ?? fallback.funnelData,
     npsData: data.npsData ?? fallback.npsData,
+    financialData: {
+      ...fallback.financialData,
+      ...(data.financialData ?? {}),
+    },
+    npsSurvey: {
+      ...fallback.npsSurvey,
+      ...(data.npsSurvey ?? {}),
+    },
     // Older future-month documents may exist with empty arrays. Treat those
     // as uninitialized so the month receives the previous period baseline.
     investments:
-      data.dataVersion === OFFICIAL_DATA_VERSION &&
-      Array.isArray(data.investments) &&
-      data.investments.length > 0
+      Array.isArray(data.investments) && data.investments.length > 0
         ? data.investments
         : fallback.investments,
     metrics:
@@ -635,6 +735,7 @@ const normalizeDocument = (
       ? data.metaAdsCampaigns
       : fallback.metaAdsCampaigns,
     operationalData: data.operationalData,
+    dataQuality: data.dataQuality ?? fallback.dataQuality,
     cancellationReasons:
       data.cancellationReasons ?? fallback.cancellationReasons,
   } as MonthlyDashboardDocument;
@@ -644,9 +745,11 @@ const normalizeInvestmentSummary = (
   record: MonthlyDashboardDocument,
 ): MonthlyDashboardDocument => {
   const investmentTotal = calculateInvestmentTotal(record.investments);
-  const salesCurrent = record.summary.sales.current;
+  const salesCurrent = record.dataQuality?.netNewSales ?? record.summary.sales.current;
   const cacCurrent =
     salesCurrent > 0 ? Number((investmentTotal / salesCurrent).toFixed(2)) : 0;
+  const roiCurrent = calculateRoiPercent(record.financialData?.revenue, investmentTotal);
+  const npsCurrent = calculateNpsScore(record.npsSurvey);
   return {
     ...record,
     summary: {
@@ -670,6 +773,7 @@ const normalizeInvestmentSummary = (
       cac: {
         ...record.summary.cac,
         current: cacCurrent,
+        available: salesCurrent > 0,
         variation:
           record.summary.cac.previous === 0
             ? 0
@@ -680,6 +784,24 @@ const normalizeInvestmentSummary = (
                   100
                 ).toFixed(1),
               ),
+      },
+      roi: {
+        ...record.summary.roi,
+        current: roiCurrent ?? 0,
+        available: roiCurrent !== null,
+        variation:
+          roiCurrent === null || record.summary.roi.previous === 0
+            ? 0
+            : Number((((roiCurrent - record.summary.roi.previous) / record.summary.roi.previous) * 100).toFixed(1)),
+      },
+      nps: {
+        ...record.summary.nps,
+        current: npsCurrent ?? 0,
+        available: npsCurrent !== null,
+        variation:
+          npsCurrent === null
+            ? 0
+            : Number((npsCurrent - Number(record.summary.nps.previous || 0)).toFixed(1)),
       },
     },
   };
@@ -709,6 +831,10 @@ export const applyOperationalDataToDocument = (
       ...record.summary,
       additions: { ...record.summary.additions, current: entries },
       cancellations: { ...record.summary.cancellations, current: cancellations },
+      beneficiaries: {
+        ...record.summary.beneficiaries,
+        current: Number(record.summary.beneficiaries.previous || 0) + entries - cancellations,
+      },
     },
     beneficiariesData: {
       ...record.beneficiariesData,
@@ -717,6 +843,19 @@ export const applyOperationalDataToDocument = (
     cancellationReasons: cancellationReasons.length > 0
       ? cancellationReasons
       : record.cancellationReasons,
+    dataQuality: {
+      ...(record.dataQuality ?? {
+        source: operationalData.source.fileName,
+        sourceVersion: OFFICIAL_DATA_VERSION,
+        operationalStatus: "actual",
+        marketingStatus: "unavailable",
+        investmentStatus: "actual",
+        warnings: [],
+        assumptions: [],
+      }),
+      operationalStatus: operationalData.status === "complete" ? "actual" : operationalData.status,
+      source: operationalData.source.fileName,
+    },
   });
 };
 
@@ -757,13 +896,17 @@ export const loadLocalMonthlyDashboard = (
   if (typeof localStorage === "undefined") return null;
   try {
     const raw = localStorage.getItem(localMonthKey(month));
-    return raw ? (JSON.parse(raw) as MonthlyDashboardDocument) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as MonthlyDashboardDocument;
+    return parsed.dataVersion === OFFICIAL_DATA_VERSION
+      ? normalizeInvestmentSummary(normalizeDocument(month, parsed as unknown as DocumentData))
+      : null;
   } catch {
     return null;
   }
 };
 
-export const OFFICIAL_DATA_VERSION = "investment-mensal-20260810";
+export const OFFICIAL_DATA_VERSION = OFFICIAL_DASHBOARD_SOURCE_VERSION;
 
 /**
  * Remove caches criados antes da planilha de investimentos se tornar a fonte
@@ -810,19 +953,20 @@ export const saveMonthlyDashboard = async (
   };
 
   const normalizedPayload = normalizeInvestmentSummary(payload);
-  localStorage.setItem(localMonthKey(month), JSON.stringify(normalizedPayload));
+  const firestorePayload = stripUndefinedFields(normalizedPayload);
 
   try {
     await setDoc(
       monthDocRef(month),
       {
-        ...normalizedPayload,
+        ...firestorePayload,
         month,
         updatedAt: serverTimestamp(),
         updatedBy: user ?? null,
       },
       { merge: true },
     );
+    localStorage.setItem(localMonthKey(month), JSON.stringify(normalizedPayload));
     return { localSaved: true, remoteSaved: true };
   } catch (error) {
     // The local copy remains available, but callers must know that the
@@ -831,6 +975,7 @@ export const saveMonthlyDashboard = async (
       "[dashboard] Falha ao sincronizar o mês com o Firestore",
       error,
     );
+    localStorage.setItem(localMonthKey(month), JSON.stringify(normalizedPayload));
     return {
       localSaved: true,
       remoteSaved: false,
@@ -842,47 +987,202 @@ export const saveMonthlyDashboard = async (
   }
 };
 
+export const stripUndefinedFields = <T>(value: T): T => {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefinedFields(item)) as T;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== undefined)
+        .map(([key, item]) => [key, stripUndefinedFields(item)]),
+    ) as T;
+  }
+  return value;
+};
+
 export const subscribeMonthlyDashboard = (
   month: MonthKey,
   handler: MonthlyDashboardSnapshotHandler,
 ) => {
-  // A local UI session without Firebase Auth cannot read Firestore. Avoid
-  // opening a listener that will only generate permission errors. The
-  // deterministic spreadsheet baseline remains available for editing.
-  if (!auth.currentUser) {
-    handler(null, new Error("Usuário não autenticado no Firebase."));
-    return () => undefined;
-  }
+  let disposed = false;
+  let unsubscribeRemote = () => undefined;
 
-  const unsubscribeRemote = onSnapshot(
-    monthDocRef(month),
-    (snap) => {
-      if (!snap.exists()) {
-        handler(
-          null,
-          new Error(
-            `Dados do mês "${month}" ainda não foram sincronizados no Firestore.`,
-          ),
-        );
+  // On a hard reload Firebase restores the persisted user asynchronously.
+  // Waiting for that hydration prevents a valid session from being treated as
+  // unauthenticated and permanently falling back to the browser cache.
+  void auth.authStateReady()
+    .then(() => {
+      if (disposed) return;
+      if (!auth.currentUser) {
+        handler(null, new Error("Usuário não autenticado no Firebase."));
         return;
       }
 
-      const normalized = normalizeDocument(month, snap.data());
-      // Firestore is authoritative when a remote document exists. The local
-      // copy is only a fallback while the database is unavailable.
-      handler(normalized);
-    },
-    (error) => {
-      handler(
-        null,
-        error instanceof Error
-          ? error
-          : new Error("Falha ao ler o dashboard mensal no Firestore."),
+      unsubscribeRemote = onSnapshot(
+        monthDocRef(month),
+        (snap) => {
+          if (!snap.exists()) {
+            handler(
+              null,
+              new Error(
+                `Dados do mês "${month}" ainda não foram sincronizados no Firestore.`,
+              ),
+            );
+            return;
+          }
+
+          if (snap.data().dataVersion !== OFFICIAL_DATA_VERSION) {
+            handler(
+              buildMonthlyDocument(month),
+              new Error(`A competência "${month}" precisa ser migrada para a base oficial atual.`),
+            );
+            return;
+          }
+
+          const normalized = normalizeDocument(month, snap.data());
+          // Firestore is authoritative when a remote document exists. The
+          // local copy is only a fallback while the database is unavailable.
+          handler(normalized);
+        },
+        (error) => {
+          handler(
+            null,
+            error instanceof Error
+              ? error
+              : new Error("Falha ao ler o dashboard mensal no Firestore."),
+          );
+        },
       );
-    },
-  );
+    })
+    .catch((error) => {
+      if (!disposed) {
+        handler(
+          null,
+          error instanceof Error
+            ? error
+            : new Error("Falha ao restaurar a autenticação do Firebase."),
+        );
+      }
+    });
 
   return () => {
+    disposed = true;
+    unsubscribeRemote();
+  };
+};
+
+export const aggregateMonthlyDashboards = (
+  records: MonthlyDashboardDocument[],
+): MonthlyDashboardDocument => {
+  const ordered = records
+    .slice()
+    .sort((a, b) => getOfficialMonthIndex(a.month) - getOfficialMonthIndex(b.month));
+  const operationalRecords = ordered.filter((record) => record.dataQuality?.operationalStatus === "actual" || record.dataQuality?.operationalStatus === "partial");
+  const marketingRecords = ordered.filter((record) => record.dataQuality?.marketingStatus === "actual" || record.dataQuality?.marketingStatus === "review");
+  const investmentRecords = ordered.filter((record) => record.dataQuality?.investmentStatus === "actual");
+  const financialRecords = ordered.filter((record) => Number(record.financialData?.revenue) >= 0 && record.financialData?.revenue !== null);
+  const surveyRecords = ordered.filter((record) => calculateNpsScore(record.npsSurvey) !== null);
+  const sumMetric = (items: MonthlyDashboardDocument[], key: keyof SummaryData) =>
+    items.reduce((sum, record) => sum + (record.summary[key].available === false ? 0 : Number(record.summary[key].current) || 0), 0);
+  const totalInvestment = sumMetric(investmentRecords, "investment");
+  const totalNetNew = operationalRecords.reduce((sum, record) => sum + (record.dataQuality?.netNewSales || 0), 0);
+  const latestOperational = operationalRecords.at(-1);
+  const base = buildMonthlyDocument("Todos");
+  const reasonTotals = new Map<string, number>();
+  operationalRecords.forEach((record) => record.cancellationReasons.forEach((item) => {
+    reasonTotals.set(item.reason, (reasonTotals.get(item.reason) || 0) + item.count);
+  }));
+  return normalizeInvestmentSummary({
+    ...base,
+    month: "Todos",
+    summary: {
+      beneficiaries: makeOfficialMetric(latestOperational?.summary.beneficiaries.current || 0, 0, Boolean(latestOperational)),
+      additions: makeOfficialMetric(sumMetric(operationalRecords, "additions"), 0, operationalRecords.length > 0),
+      cancellations: makeOfficialMetric(sumMetric(operationalRecords, "cancellations"), 0, operationalRecords.length > 0),
+      investment: makeOfficialMetric(totalInvestment, 0, investmentRecords.length > 0, totalInvestment),
+      roi: makeOfficialMetric(0, 0, false),
+      leads: makeOfficialMetric(sumMetric(marketingRecords, "leads"), 0, marketingRecords.length > 0),
+      appointments: makeOfficialMetric(0, 0, false),
+      sales: makeOfficialMetric(totalNetNew, 0, totalNetNew > 0),
+      cac: makeOfficialMetric(totalNetNew > 0 ? Number((totalInvestment / totalNetNew).toFixed(2)) : 0, 0, totalNetNew > 0),
+      nps: makeOfficialMetric(0, 0, false),
+    },
+    investments: investmentRecords.flatMap((record) => record.investments),
+    metrics: marketingRecords.flatMap((record) => record.metrics),
+    metaAdsCampaigns: marketingRecords.flatMap((record) => record.metaAdsCampaigns || []),
+    financialData: {
+      revenue: financialRecords.length
+        ? financialRecords.reduce((sum, record) => sum + Number(record.financialData?.revenue || 0), 0)
+        : null,
+    },
+    npsSurvey: surveyRecords.length
+      ? surveyRecords.reduce<NpsSurveyData>((total, record) => ({
+          promoters: Number(total.promoters || 0) + Number(record.npsSurvey?.promoters || 0),
+          passives: Number(total.passives || 0) + Number(record.npsSurvey?.passives || 0),
+          detractors: Number(total.detractors || 0) + Number(record.npsSurvey?.detractors || 0),
+        }), { promoters: 0, passives: 0, detractors: 0 })
+      : { promoters: null, passives: null, detractors: null },
+    operationalData: undefined,
+    cancellationReasons: Array.from(reasonTotals, ([reason, count]) => ({ reason, count })),
+    dataQuality: {
+      source: "BASE-DADOS-DASHBOARD-UNIODONTO-2026.xlsx",
+      sourceVersion: OFFICIAL_DATA_VERSION,
+      operationalStatus: operationalRecords.length ? "actual" : "not_sent",
+      marketingStatus: marketingRecords.length ? "actual" : "not_sent",
+      investmentStatus: investmentRecords.length ? "actual" : "not_sent",
+      netNewSales: totalNetNew,
+      warnings: ["O consolidado considera somente competências realizadas; projeções não entram nos totais."],
+      assumptions: ["Total de beneficiários de janeiro de 2026 fixado em 10.289; a evolução acumulada começa em fevereiro."],
+    },
+  });
+};
+
+export const getOfficialDashboardRecords = () =>
+  OFFICIAL_MONTHS_2026.map((month) => buildMonthlyDocument(month));
+
+export const subscribeAllMonthlyDashboards = (handler: MonthlyDashboardSnapshotHandler) => {
+  let disposed = false;
+  let unsubscribeRemote = () => undefined;
+
+  void auth.authStateReady()
+    .then(() => {
+      if (disposed) return;
+      if (!auth.currentUser) {
+        handler(
+          aggregateMonthlyDashboards(getOfficialDashboardRecords()),
+          new Error("Usuário não autenticado no Firebase."),
+        );
+        return;
+      }
+      unsubscribeRemote = onSnapshot(
+        collection(db, "organizations", "uniodonto", "months"),
+        (snapshot) => {
+          const remoteByMonth = new Map(snapshot.docs.map((item) => [String(item.data().month || item.id.replace("-", "/")), item.data()]));
+          const records = OFFICIAL_MONTHS_2026.map((month) => {
+            const remote = remoteByMonth.get(month);
+            return remote?.dataVersion === OFFICIAL_DATA_VERSION
+              ? normalizeDocument(month, remote)
+              : buildMonthlyDocument(month);
+          });
+          handler(aggregateMonthlyDashboards(records));
+        },
+        (error) => handler(aggregateMonthlyDashboards(getOfficialDashboardRecords()), error),
+      );
+    })
+    .catch((error) => {
+      if (!disposed) {
+        handler(
+          aggregateMonthlyDashboards(getOfficialDashboardRecords()),
+          error instanceof Error
+            ? error
+            : new Error("Falha ao restaurar a autenticação do Firebase."),
+        );
+      }
+    });
+
+  return () => {
+    disposed = true;
     unsubscribeRemote();
   };
 };
@@ -905,11 +1205,14 @@ export const buildRecordFromEnvioState = (payload: {
   beneficiariesData?: BeneficiariesData;
   funnelData?: FunnelDataPoint[];
   npsData?: NpsDataPoint[];
+  financialData?: FinancialData;
+  npsSurvey?: NpsSurveyData;
   investments: InvestmentItem[];
   metrics: MetricItem[];
   metaAdsCampaigns?: MetaAdsCampaign[];
   operationalData?: MonthlyOperationalData;
   cancellationReasons?: MonthlyDashboardDocument["cancellationReasons"];
+  dataQuality?: MonthlyDashboardDocument["dataQuality"];
   month: MonthKey;
 }): MonthlyDashboardDocument =>
   normalizeInvestmentSummary({
@@ -922,10 +1225,13 @@ export const buildRecordFromEnvioState = (payload: {
     funnelData:
       payload.funnelData ?? buildMonthlyDocument(payload.month).funnelData,
     npsData: payload.npsData ?? buildMonthlyDocument(payload.month).npsData,
+    financialData: payload.financialData ?? buildMonthlyDocument(payload.month).financialData,
+    npsSurvey: payload.npsSurvey ?? buildMonthlyDocument(payload.month).npsSurvey,
     investments: payload.investments,
     metrics: payload.metrics,
     metaAdsCampaigns: payload.metaAdsCampaigns || [],
     operationalData: payload.operationalData,
+    dataQuality: payload.dataQuality ?? buildMonthlyDocument(payload.month).dataQuality,
     cancellationReasons:
       payload.cancellationReasons ??
       buildMonthlyDocument(payload.month).cancellationReasons,

@@ -3,9 +3,13 @@ import {
   buildRecordFromEnvioState,
   calculateInvestmentTotal,
   calculateMetaAdsMetrics,
+  calculateNpsScore,
+  calculateRoiPercent,
+  stripUndefinedFields,
   buildMarketingFunnelData,
   clearLegacyMonthlyDashboardCache,
   defaultMonthlyDashboard,
+  getDefaultMonthlyDashboard,
   getPeriodLabel,
   type InvestmentItem,
   type SummaryData,
@@ -14,6 +18,14 @@ import { getMonthlyInvestmentTotal, getMonthlyInvestmentValues } from "./investm
 import { getOfficialMetaAdsCampaigns } from "./metaAdsMonthlyData";
 
 describe("dashboardData", () => {
+  it("remove campos indefinidos antes de gravar no Firestore", () => {
+    expect(
+      stripUndefinedFields({
+        summary: { current: 10, target: undefined },
+        rows: [{ value: 1, note: undefined }],
+      }),
+    ).toEqual({ summary: { current: 10 }, rows: [{ value: 1 }] });
+  });
   it("loads the official Meta leads by month and leaves unavailable months empty", () => {
     expect(getOfficialMetaAdsCampaigns("Julho/2026")[0]).toMatchObject({
       investment: 1226.35,
@@ -26,14 +38,14 @@ describe("dashboardData", () => {
     expect(getOfficialMetaAdsCampaigns("Agosto/2026")).toEqual([]);
   });
 
-  it("uses impressions as the explicit cost-per-view proxy when page views are absent", () => {
+  it("does not present impressions as page views when page views are absent", () => {
     const metrics = calculateMetaAdsMetrics({
       investment: 1634.58,
       impressions: 121696,
       linkClicks: 743,
       pageViews: null,
     });
-    expect(metrics.costPerView).toBeCloseTo(1634.58 / 121696, 8);
+    expect(metrics.costPerView).toBeNull();
   });
 
   it("sums only checked investments", () => {
@@ -105,6 +117,10 @@ describe("dashboardData", () => {
       beneficiariesData: defaultMonthlyDashboard.beneficiariesData,
       funnelData: defaultMonthlyDashboard.funnelData,
       npsData: defaultMonthlyDashboard.npsData,
+      dataQuality: {
+        ...defaultMonthlyDashboard.dataQuality!,
+        netNewSales: 5,
+      },
     });
 
     expect(record.summary.investment.current).toBe(15.5);
@@ -115,7 +131,7 @@ describe("dashboardData", () => {
   it("uses the first spreadsheet tab for every monthly investment value", () => {
     expect(getMonthlyInvestmentValues("Maio/2026")["7"]).toBe(1366.1);
     expect(getMonthlyInvestmentValues("Agosto/2026")["14"]).toBe(1750);
-    expect(getMonthlyInvestmentTotal("Janeiro/2026")).toBe(10018.01);
+    expect(getMonthlyInvestmentTotal("Janeiro/2026")).toBe(10282.38);
     expect(getMonthlyInvestmentTotal("Abril/2026")).toBe(12018.01);
     expect(getMonthlyInvestmentTotal("Maio/2026")).toBe(12013.9);
   });
@@ -162,9 +178,28 @@ describe("dashboardData", () => {
       metaAdsCampaigns: [],
     });
 
-    expect(funnel.impressions).toBe(150000);
-    expect(funnel.clicks).toBe(3250);
-    expect(funnel.leads).toBe(420);
+    expect(funnel.impressions).toBe(126754);
+    expect(funnel.clicks).toBe(956);
+    expect(funnel.leads).toBe(34);
+  });
+
+  it("uses the reconciled operational values and all six cities", () => {
+    const april = getDefaultMonthlyDashboard("Abril/2026");
+    expect(april.summary.additions.current).toBe(331);
+    expect(april.summary.cancellations.current).toBe(258);
+    expect(april.summary.sales.current).toBe(297);
+    expect(april.summary.cac.current).toBeCloseTo(12018.01 / 297, 2);
+    expect(april.operationalData?.entriesByCity).toHaveLength(6);
+    expect(april.operationalData?.entriesByCity.reduce((sum, city) => sum + city.entries, 0)).toBe(331);
+  });
+
+  it("marks missing future operational data as not sent instead of fabricating values", () => {
+    const august = getDefaultMonthlyDashboard("Agosto/2026");
+    expect(august.summary.additions.available).toBe(false);
+    expect(august.summary.additions.current).toBe(0);
+    expect(august.operationalData).toBeUndefined();
+    expect(august.dataQuality?.operationalStatus).toBe("not_sent");
+    expect(august.dataQuality?.investmentStatus).toBe("projected");
   });
 
   it("does not fabricate Meta metrics when a denominator is zero or missing", () => {
@@ -180,6 +215,17 @@ describe("dashboardData", () => {
     expect(metrics.cpm).toBeNull();
     expect(metrics.costPerView).toBeNull();
     expect(metrics.clickToPageRate).toBeNull();
+  });
+
+  it("calcula o ROI somente quando receita e investimento são válidos", () => {
+    expect(calculateRoiPercent(40_000, 10_000)).toBe(400);
+    expect(calculateRoiPercent(null, 10_000)).toBeNull();
+    expect(calculateRoiPercent(40_000, 0)).toBeNull();
+  });
+
+  it("calcula o NPS a partir das respostas e preserva dados indisponíveis", () => {
+    expect(calculateNpsScore({ promoters: 80, passives: 10, detractors: 10 })).toBe(70);
+    expect(calculateNpsScore({ promoters: null, passives: null, detractors: null })).toBeNull();
   });
 
   it("clears only the legacy monthly cache", () => {

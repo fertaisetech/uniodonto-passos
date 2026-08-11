@@ -25,8 +25,11 @@ import {
   type MonthlyDashboardDocument,
   type SummaryData,
   type MetaAdsCampaign,
+  calculateNpsScore,
+  calculateRoiPercent,
 } from "../lib/dashboardData";
 import { parseOperationalWorkbook, operationalMonthKey } from "../lib/operationalSpreadsheet";
+import { OFFICIAL_CITIES } from "../lib/officialDashboard2026Data";
 import { useAppSession } from "../context/AppSessionContext";
 
 // Types
@@ -35,7 +38,7 @@ interface ResumoCardItem {
   label: string;
   checked: boolean;
   value: number;
-  unit: "PESSOAS" | "LEADS" | "VENDAS" | "R$" | "PTS" | "%";
+  unit: "PESSOAS" | "LEADS" | "VENDAS" | "R$" | "PTS" | "%" | "RESPOSTAS";
   tooltip: string;
 }
 
@@ -70,7 +73,11 @@ export function EnvioIntegracao() {
   const { profile } = useAppSession();
   const baseSummary = dashboardData?.summary;
 
-  const buildResumoItems = (summary: SummaryData): ResumoCardItem[] => [
+  const buildResumoItems = (
+    summary: SummaryData,
+    financialData?: MonthlyDashboardDocument["financialData"],
+    npsSurvey?: MonthlyDashboardDocument["npsSurvey"],
+  ): ResumoCardItem[] => [
     {
       id: "ben_ativos",
       label: "Beneficiários Ativos",
@@ -112,23 +119,36 @@ export function EnvioIntegracao() {
       tooltip: "Quantidade total de vendas convertidas",
     },
     {
-      id: "ltv",
-      label: "Lifetime Value (LTV RS)",
-      checked: true,
-      value:
-        summary.sales.current > 0
-          ? (summary.cac.current || 0) * ((summary.roi.current || 0) / 100)
-          : 0,
+      id: "receita_mes",
+      label: "Receita / retorno do mês",
+      checked: financialData?.revenue !== null && financialData?.revenue !== undefined,
+      value: Number(financialData?.revenue || 0),
       unit: "R$",
-      tooltip: "Valor calculado a partir dos dados disponíveis no mês",
+      tooltip: "Receita atribuída ao período, usada para calcular o retorno sobre o investimento",
     },
     {
-      id: "nps",
-      label: "Pontuação NPS (0 a 100)",
-      checked: true,
-      value: summary.nps.current,
-      unit: "PTS",
-      tooltip: "Net Promoter Score indicador de satisfação geral",
+      id: "nps_promotores",
+      label: "Promotores NPS",
+      checked: npsSurvey?.promoters !== null && npsSurvey?.promoters !== undefined,
+      value: Number(npsSurvey?.promoters || 0),
+      unit: "RESPOSTAS",
+      tooltip: "Respostas com notas 9 ou 10",
+    },
+    {
+      id: "nps_neutros",
+      label: "Neutros NPS",
+      checked: npsSurvey?.passives !== null && npsSurvey?.passives !== undefined,
+      value: Number(npsSurvey?.passives || 0),
+      unit: "RESPOSTAS",
+      tooltip: "Respostas com notas 7 ou 8",
+    },
+    {
+      id: "nps_detratores",
+      label: "Detratores NPS",
+      checked: npsSurvey?.detractors !== null && npsSurvey?.detractors !== undefined,
+      value: Number(npsSurvey?.detractors || 0),
+      unit: "RESPOSTAS",
+      tooltip: "Respostas com notas de 0 a 6",
     },
   ];
 
@@ -198,7 +218,7 @@ export function EnvioIntegracao() {
         if (!result.remoteSaved) remoteFailures += 1;
 
         if (monthKey === selectedMonth) {
-          setResumoItems(buildResumoItems(normalized.summary));
+          setResumoItems(buildResumoItems(normalized.summary, normalized.financialData, normalized.npsSurvey));
           setCancellationReasons(normalized.cancellationReasons);
           setCityCounts(normalized.beneficiariesData.distribution.map((item) => Number(item.count) || 0));
         }
@@ -221,7 +241,7 @@ export function EnvioIntegracao() {
     if (!dashboardData) return;
 
     const summary = dashboardData.summary;
-    setResumoItems(buildResumoItems(summary));
+    setResumoItems(buildResumoItems(summary, dashboardData.financialData, dashboardData.npsSurvey));
     setInvestimentos(dashboardData.investments);
     setMetrics(dashboardData.metrics);
     setMetaAdsCampaigns(dashboardData.metaAdsCampaigns || []);
@@ -247,7 +267,16 @@ export function EnvioIntegracao() {
     resumoItems.find((i) => i.id === "leads_captados")?.value || 0;
   const conversoesCount =
     resumoItems.find((i) => i.id === "conversoes_efetivas")?.value || 0;
-  const npsScore = resumoItems.find((i) => i.id === "nps")?.value || 0;
+  const itemValue = (id: string) => resumoItems.find((item) => item.id === id)?.value || 0;
+  const itemEnabled = (id: string) => resumoItems.find((item) => item.id === id)?.checked === true;
+  const revenueValue = itemValue("receita_mes");
+  const npsSurvey = {
+    promoters: itemEnabled("nps_promotores") ? itemValue("nps_promotores") : null,
+    passives: itemEnabled("nps_neutros") ? itemValue("nps_neutros") : null,
+    detractors: itemEnabled("nps_detratores") ? itemValue("nps_detratores") : null,
+  };
+  const calculatedNps = calculateNpsScore(npsSurvey);
+  const npsScore = calculatedNps ?? 0;
   const agendamentosCount = Number(
     metrics.find((item) => item.id === "agend")?.value || 0,
   );
@@ -272,15 +301,11 @@ export function EnvioIntegracao() {
     return totalInvestido / leadsCount;
   }, [totalInvestido, leadsCount]);
 
-  // ROI derived: (Revenue - Investment) / Investment * 100
-  // In screen 2: ROI (Retorno sobre Invest.) is 9.575,00 % which matches total conversions * lifetime value or similar scale?
-  // Let's use a dynamic display that recalculates beautifully based on total_revenue / total_invested * 100 or stick to user screenshot metrics
-  const calculatedROI = useMemo(() => {
-    if (totalInvestido <= 0) return 0;
-    const ltvVal = resumoItems.find((i) => i.id === "ltv")?.value || 0;
-    const estimatedValue = conversoesCount * ltvVal;
-    return (estimatedValue / totalInvestido) * 100;
-  }, [totalInvestido, conversoesCount, resumoItems]);
+  // Retorno atribuído ao período para cada R$ 1 investido, expresso em percentual.
+  const calculatedROI = useMemo(
+    () => calculateRoiPercent(itemEnabled("receita_mes") ? revenueValue : null, totalInvestido),
+    [revenueValue, resumoItems, totalInvestido],
+  );
 
   const buildSummaryForSave = (): SummaryData => {
     if (!baseSummary) return {} as SummaryData;
@@ -289,6 +314,7 @@ export function EnvioIntegracao() {
       current: number,
       previous: number,
       target?: number,
+      available?: boolean,
     ) => ({
       current,
       previous,
@@ -297,6 +323,7 @@ export function EnvioIntegracao() {
           ? 0
           : Number((((current - previous) / previous) * 100).toFixed(1)),
       target,
+      available,
     });
 
     return {
@@ -304,41 +331,49 @@ export function EnvioIntegracao() {
         resumoItems.find((item) => item.id === "ben_ativos")?.value || 0,
         baseSummary.beneficiaries.previous,
         baseSummary.beneficiaries.target,
+        baseSummary.beneficiaries.available,
       ),
       additions: makeMetric(
         resumoItems.find((item) => item.id === "novas_vendas")?.value || 0,
         baseSummary.additions.previous,
         baseSummary.additions.target,
+        baseSummary.additions.available,
       ),
       cancellations: makeMetric(
         resumoItems.find((item) => item.id === "cancelamentos")?.value || 0,
         baseSummary.cancellations.previous,
         baseSummary.cancellations.target,
+        baseSummary.cancellations.available,
       ),
       investment: makeMetric(
         totalInvestido,
         baseSummary.investment.previous,
         baseSummary.investment.target,
+        baseSummary.investment.available,
       ),
       roi: makeMetric(
-        Number(calculatedROI.toFixed(2)),
+        calculatedROI ?? 0,
         baseSummary.roi.previous,
         baseSummary.roi.target,
+        calculatedROI !== null,
       ),
       leads: makeMetric(
         leadsCount,
         baseSummary.leads.previous,
         baseSummary.leads.target,
+        baseSummary.leads.available,
       ),
       appointments: makeMetric(
         agendamentosCount,
         baseSummary.appointments.previous,
         baseSummary.appointments.target,
+        baseSummary.appointments.available,
       ),
       sales: makeMetric(
         conversoesCount,
         baseSummary.sales.previous,
         baseSummary.sales.target,
+        baseSummary.sales.available,
       ),
       cac: makeMetric(
         Number(
@@ -348,11 +383,13 @@ export function EnvioIntegracao() {
         ),
         baseSummary.cac.previous,
         baseSummary.cac.target,
+        baseSummary.cac.available,
       ),
       nps: makeMetric(
         npsScore,
         baseSummary.nps.previous,
         baseSummary.nps.target,
+        calculatedNps !== null,
       ),
     };
   };
@@ -605,7 +642,7 @@ export function EnvioIntegracao() {
           item.checked &&
           (!Number.isFinite(item.value) ||
             item.value < 0 ||
-            (item.id === "nps" && item.value > 100)),
+            (["nps_promotores", "nps_neutros", "nps_detratores"].includes(item.id) && !Number.isInteger(item.value))),
       );
       const invalidMetric = metrics.find(
         (item) => item.checked && !item.value.trim(),
@@ -637,8 +674,8 @@ export function EnvioIntegracao() {
       );
       if (invalidResumo || invalidMetric || invalidMeta || duplicateMeta) {
         triggerToast(
-          invalidResumo?.id === "nps"
-            ? "O NPS deve estar entre 0 e 100."
+          invalidResumo && ["nps_promotores", "nps_neutros", "nps_detratores"].includes(invalidResumo.id)
+            ? "As respostas do NPS devem ser números inteiros e não negativos."
             : invalidMeta
               ? "Preencha a campanha Meta com números válidos e inteiros nas contagens."
               : duplicateMeta
@@ -654,17 +691,29 @@ export function EnvioIntegracao() {
         beneficiariesData: {
           ...dashboardData.beneficiariesData,
           distribution: cityCounts.map((count, index) => ({
-            plan: ["Passos", "Itaú de Minas", "S.S. Paraíso", "Cássia"][index],
+            plan: OFFICIAL_CITIES[index] || `Cidade ${index + 1}`,
             count,
           })),
         },
         funnelData: dashboardData.funnelData,
         npsData: dashboardData.npsData,
+        financialData: {
+          revenue: itemEnabled("receita_mes") ? revenueValue : null,
+        },
+        npsSurvey,
         investments: investimentos,
         metrics,
         metaAdsCampaigns,
         operationalData: currentOperationalData,
         cancellationReasons,
+        dataQuality: dashboardData.dataQuality
+          ? {
+              ...dashboardData.dataQuality,
+              warnings: dashboardData.dataQuality.warnings.filter(
+                (warning) => !warning.includes("ROI, NPS"),
+              ),
+            }
+          : undefined,
       });
 
       const saveResult = await saveMonthlyDashboard(
@@ -676,8 +725,8 @@ export function EnvioIntegracao() {
       triggerToast(
         saveResult.remoteSaved
           ? `Mês ${selectedMonth} salvo e sincronizado.`
-          : `Mês ${selectedMonth} salvo localmente.`,
-        "success",
+          : `Mês ${selectedMonth} salvo localmente; a sincronização remota continua pendente.`,
+        saveResult.remoteSaved ? "success" : "error",
       );
     } catch (error) {
       triggerToast("Não foi possível salvar o mês. Tente novamente.", "error");
@@ -728,7 +777,7 @@ export function EnvioIntegracao() {
     );
   }
 
-  const cityNames = ["Passos", "Itaú de Minas", "S.S. Paraíso", "Cássia"];
+  const cityNames = [...OFFICIAL_CITIES];
   const cityDistribution = cityNames.map((city, index) => ({
     city,
     count:
@@ -884,7 +933,6 @@ export function EnvioIntegracao() {
                       disabled={!item.checked}
                       required={item.checked}
                       min="0"
-                      max={item.id === "nps" ? "100" : undefined}
                       value={item.value}
                       onChange={(e) =>
                         handleUpdateResumoValue(item.id, e.target.value)
@@ -1224,7 +1272,7 @@ export function EnvioIntegracao() {
                 ROI (Retorno sobre Invest.)
               </span>
               <span className="text-emerald-600 font-extrabold font-mono text-[12px]">
-                {formatBRL(calculatedROI)}{" "}
+                {calculatedROI === null ? "Indisponível" : formatBRL(calculatedROI)}{" "}
                 <span className="text-[9px] text-emerald-500 uppercase font-sans font-bold">
                   %
                 </span>
@@ -1248,7 +1296,7 @@ export function EnvioIntegracao() {
                 Satisfação Geral (NPS)
               </span>
               <span className="text-emerald-500 font-black font-mono">
-                {npsScore}{" "}
+                {calculatedNps === null ? "Indisponível" : formatBRL(npsScore)}{" "}
                 <span className="text-[9px] text-emerald-400 uppercase font-sans font-bold">
                   %
                 </span>
