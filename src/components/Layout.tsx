@@ -12,7 +12,6 @@ import {
   User,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Calendar,
   Filter,
   Download,
@@ -26,7 +25,6 @@ import { getCurrentMonthKey, getPeriodLabel } from "../lib/dashboardData";
 
 export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [isMobileMonthMenuOpen, setIsMobileMonthMenuOpen] = useState(false);
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -96,7 +94,6 @@ export function Layout() {
     const newParams = new URLSearchParams(searchParams);
     newParams.set("month", month);
     setSearchParams(newParams);
-    setIsMobileMonthMenuOpen(false);
   };
 
   return (
@@ -260,50 +257,19 @@ export function Layout() {
               </div>
             ) : isDashboard ? (
               <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
-                <div className="relative w-full md:hidden">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setIsMobileMonthMenuOpen((current) => !current)
-                    }
-                    className="w-full flex items-center justify-between gap-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl px-4 py-3 shadow-sm text-left"
-                    aria-label={`Selecionar mês atual ${currentMonthDisplay}`}
-                    aria-expanded={isMobileMonthMenuOpen}
-                  >
-                    <span
-                      className={`text-sm font-extrabold ${currentMonth !== "Todos" ? "text-[#A60069]" : "text-slate-700"}`}
-                    >
-                      {currentMonthDisplay}
-                    </span>
-                    <ChevronDown
-                      className={`w-4 h-4 text-[#64748B] transition-transform ${isMobileMonthMenuOpen ? "rotate-180" : ""}`}
-                    />
-                  </button>
-
-                  {isMobileMonthMenuOpen && (
-                    <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 rounded-2xl border border-[#E2E8F0] bg-white shadow-2xl overflow-hidden">
-                      <div className="max-h-[55vh] overflow-y-auto">
-                        <button
-                          type="button"
-                          onClick={() => updateMonth("Todos")}
-                          className={`w-full px-4 py-3 text-left text-sm font-bold border-b border-slate-100 last:border-b-0 hover:bg-[#FFF5F9] transition-colors ${currentMonth === "Todos" ? "text-[#A60069] bg-[#FFF5F9]" : "text-slate-700"}`}
-                        >
-                          Todos os Meses
-                        </button>
-                        {monthsList.map((month) => (
-                          <button
-                            key={month}
-                            type="button"
-                            onClick={() => updateMonth(month)}
-                            className={`w-full px-4 py-3 text-left text-sm font-bold border-b border-slate-100 last:border-b-0 hover:bg-[#FFF5F9] transition-colors ${currentMonth === month ? "text-[#A60069] bg-[#FFF5F9]" : "text-slate-700"}`}
-                          >
-                            {month}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <select
+                  value={currentMonth}
+                  onChange={(event) => updateMonth(event.target.value)}
+                  className="w-full md:hidden h-[44px] appearance-auto rounded-xl border border-[#E2E8F0] bg-white px-3 text-sm font-extrabold text-[#A60069] shadow-sm focus:outline-none focus:ring-2 focus:ring-[#A60069]/20"
+                  aria-label={`Selecionar mês atual ${currentMonthDisplay}`}
+                >
+                  <option value="Todos">Todos os Meses</option>
+                  {monthsList.map((month) => (
+                    <option key={month} value={month}>
+                      {month}
+                    </option>
+                  ))}
+                </select>
 
                 <div className="hidden md:flex flex-col sm:flex-row items-center gap-3">
                   {/* 1. Monthly navigation row */}

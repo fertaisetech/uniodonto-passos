@@ -100,6 +100,74 @@ export interface MetaAdsCalculatedMetrics {
   clickToPageRate: number | null;
 }
 
+export interface MarketingFunnelData {
+  impressions: number;
+  clicks: number;
+  leads: number;
+  appointments: number;
+  sales: number;
+}
+
+const parseMetricNumber = (value: string | number | null | undefined) => {
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0 ? value : 0;
+  const normalized = String(value ?? "")
+    .replace(/[^0-9,.-]/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+/**
+ * Builds the dashboard funnel from the selected monthly sources.
+ * Meta traffic is authoritative for impressions, clicks and channel leads;
+ * operational summary is authoritative for appointments and sales.
+ */
+export const buildMarketingFunnelData = ({
+  summary,
+  metrics,
+  metaAdsCampaigns = [],
+}: {
+  summary: SummaryData;
+  metrics: MetricItem[];
+  metaAdsCampaigns?: MetaAdsCampaign[];
+}): MarketingFunnelData => {
+  const metaTotals = metaAdsCampaigns
+    .filter((campaign) => campaign.active && campaign.channel === "Meta")
+    .reduce(
+      (totals, campaign) => ({
+        impressions: totals.impressions + parseMetricNumber(campaign.impressions),
+        clicks: totals.clicks + parseMetricNumber(campaign.linkClicks),
+        leads: totals.leads + parseMetricNumber(campaign.leads),
+      }),
+      { impressions: 0, clicks: 0, leads: 0 },
+    );
+
+  const metricValue = (id: string, label: string) => {
+    const item = metrics.find(
+      (metric) =>
+        metric.checked &&
+        (metric.id === id || metric.label.toLowerCase() === label.toLowerCase()),
+    );
+    return parseMetricNumber(item?.value);
+  };
+
+  const hasOfficialMetaTraffic =
+    metaAdsCampaigns.length > 0 &&
+    (metaTotals.impressions > 0 || metaTotals.clicks > 0 || metaTotals.leads > 0);
+  const wholeCount = (value: number) => Math.max(0, Math.round(Number(value) || 0));
+
+  return {
+    impressions: hasOfficialMetaTraffic ? metaTotals.impressions : metricValue("imp", "Impressões"),
+    clicks: hasOfficialMetaTraffic ? metaTotals.clicks : metricValue("clic", "Cliques"),
+    leads: hasOfficialMetaTraffic
+      ? metaTotals.leads
+      : metricValue("leads_canal", "Leads por Canal") || Math.max(0, Number(summary.leads.current) || 0),
+    appointments: wholeCount(summary.appointments.current),
+    sales: wholeCount(summary.sales.current),
+  };
+};
+
 export const calculateMetaAdsMetrics = (
   campaign: Pick<MetaAdsCampaign, "investment" | "impressions" | "linkClicks" | "pageViews">,
 ): MetaAdsCalculatedMetrics => {

@@ -3,6 +3,7 @@ import {
   buildRecordFromEnvioState,
   calculateInvestmentTotal,
   calculateMetaAdsMetrics,
+  buildMarketingFunnelData,
   clearLegacyMonthlyDashboardCache,
   defaultMonthlyDashboard,
   getPeriodLabel,
@@ -132,6 +133,38 @@ describe("dashboardData", () => {
     expect(metrics.cpm).toBeCloseTo(5.7869, 3);
     expect(metrics.costPerView).toBeCloseTo(0.464, 3);
     expect(metrics.clickToPageRate).toBeCloseTo(50.6957, 3);
+  });
+
+  it("uses the selected month's official Meta traffic in the conversion funnel", () => {
+    const funnel = buildMarketingFunnelData({
+      summary: {
+        ...defaultMonthlyDashboard.summary,
+        appointments: { current: 21, previous: 0, variation: 0 },
+        sales: { current: 18, previous: 0, variation: 0 },
+      },
+      metrics: defaultMonthlyDashboard.metrics,
+      metaAdsCampaigns: getOfficialMetaAdsCampaigns("Junho/2026"),
+    });
+
+    expect(funnel).toMatchObject({
+      impressions: 128198,
+      clicks: 1109,
+      leads: 55,
+      appointments: 21,
+      sales: 18,
+    });
+  });
+
+  it("falls back to the monthly saved metrics when Meta has no official record", () => {
+    const funnel = buildMarketingFunnelData({
+      summary: defaultMonthlyDashboard.summary,
+      metrics: defaultMonthlyDashboard.metrics,
+      metaAdsCampaigns: [],
+    });
+
+    expect(funnel.impressions).toBe(150000);
+    expect(funnel.clicks).toBe(3250);
+    expect(funnel.leads).toBe(420);
   });
 
   it("does not fabricate Meta metrics when a denominator is zero or missing", () => {

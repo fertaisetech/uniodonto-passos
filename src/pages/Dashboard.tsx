@@ -6,6 +6,7 @@ import {
   getPeriodLabel,
   loadLocalMonthlyDashboard,
   calculateMetaAdsMetrics,
+  buildMarketingFunnelData,
 } from "../lib/dashboardData";
 import {
   Users,
@@ -457,24 +458,13 @@ export function Dashboard() {
     },
   };
 
-  const metricNumber = (id: string, label: string) => {
-    const item = periodMetrics.find(
-      (metric) =>
-        metric.checked &&
-        (metric.id === id ||
-          metric.label.toLowerCase() === label.toLowerCase()),
-    );
-    return (
-      Number(
-        (item?.value || "0")
-          .replace(/[^0-9,.-]/g, "")
-          .replace(/\./g, "")
-          .replace(",", "."),
-      ) || 0
-    );
-  };
-  const impressions = metricNumber("imp", "Impressões");
-  const clicks = metricNumber("clic", "Cliques");
+  const marketingFunnel = buildMarketingFunnelData({
+    summary: periodSummary,
+    metrics: periodMetrics,
+    metaAdsCampaigns,
+  });
+  const impressions = marketingFunnel.impressions;
+  const clicks = marketingFunnel.clicks;
 
   const safeRate = (value: number, denominator: number) =>
     denominator > 0
@@ -493,28 +483,9 @@ export function Dashboard() {
   const funnelMetrics = [
     { name: "Impressões", value: impressions, color: "#1877F2" },
     { name: "Cliques", value: clicks, color: "#20A4F3" },
-    {
-      name: "Leads",
-      value:
-        metricNumber("leads_canal", "Leads por Canal") ||
-        periodSummary.leads.current,
-      color: "#18C7B7",
-    },
-    {
-      name: "Agendamentos",
-      value:
-        metricNumber("agend", "Agendamentos") ||
-        periodSummary.appointments.current,
-      color: "#F4B400",
-    },
-    {
-      name: "Vendas",
-      value:
-        metricNumber("vendas_canal", "Vendas") ||
-        metricNumber("conv_canal", "Conversões por Canal") ||
-        periodSummary.sales.current,
-      color: "#E83E72",
-    },
+    { name: "Leads", value: marketingFunnel.leads, color: "#18C7B7" },
+    { name: "Agendamentos", value: marketingFunnel.appointments, color: "#F4B400" },
+    { name: "Vendas", value: marketingFunnel.sales, color: "#E83E72" },
   ];
   const channelInvestment = channelInfo[darkCardTab].investment;
   const channelLeads = funnelMetrics[2].value;
@@ -1316,9 +1287,7 @@ export function Dashboard() {
                           Impressões
                         </span>
                         <span className="text-xs font-black text-text-primary leading-none">
-                          {metricNumber("imp", "Impressões").toLocaleString(
-                            "pt-BR",
-                          )}
+                          {funnelMetrics[0].value.toLocaleString("pt-BR")}
                         </span>
                         <span className="text-[8px] text-text-secondary block leading-none mt-0.5">
                           ~ 0,0%
@@ -1329,9 +1298,7 @@ export function Dashboard() {
                           Cliques
                         </span>
                         <span className="text-xs font-black text-text-primary leading-none">
-                          {metricNumber("clic", "Cliques").toLocaleString(
-                            "pt-BR",
-                          )}
+                          {funnelMetrics[1].value.toLocaleString("pt-BR")}
                         </span>
                         <span className="text-[8px] text-text-secondary block leading-none mt-0.5">
                           ~ 0,0%
@@ -1342,7 +1309,7 @@ export function Dashboard() {
                           Leads
                         </span>
                         <span className="text-xs font-black text-text-primary leading-none">
-                          {summary.leads.current.toLocaleString("pt-BR")}
+                          {funnelMetrics[2].value.toLocaleString("pt-BR")}
                         </span>
                         <span className="text-[8px] text-success font-bold block leading-none mt-0.5">
                           ↑ 9,8%
@@ -1353,7 +1320,7 @@ export function Dashboard() {
                           Agendamentos
                         </span>
                         <span className="text-xs font-black text-text-primary leading-none">
-                          21
+                          {funnelMetrics[3].value.toLocaleString("pt-BR")}
                         </span>
                         <span className="text-[8px] text-success font-bold block leading-none mt-0.5">
                           ↑ 23,5%
@@ -1364,7 +1331,7 @@ export function Dashboard() {
                           Vendas
                         </span>
                         <span className="text-xs font-black text-text-primary leading-none">
-                          18
+                          {funnelMetrics[4].value.toLocaleString("pt-BR")}
                         </span>
                         <span className="text-[8px] text-success font-bold block leading-none mt-0.5">
                           ↑ 20,0%
